@@ -1,0 +1,108 @@
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  # =====================================================================================
+  # single pure-Go build for linux + darwin + windows (Bubble Tea TUI, no CGO)
+  # =====================================================================================
+  - id: edit
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/candy-tools/edit/app/metainfo.Version={{.Version}}
+      - -X github.com/candy-tools/edit/app/metainfo.Commit={{.Commit}}
+      - -X github.com/candy-tools/edit/app/metainfo.BuildTime={{.Date}}
+    binary: edit
+
+archives:
+  - formats: [tar.gz]
+    # windows users expect a .zip rather than a tarball.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # this name template makes the OS and Arch compatible with the results of uname.
+    name_template: >-
+      edit_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+
+nfpms:
+  # build a .deb for linux. only linux builds are packaged; the darwin and
+  # windows binaries are skipped automatically.
+  - id: edit
+    package_name: edit
+    ids:
+      - edit
+    formats:
+      - deb
+    maintainer: "Andres Bott <contact@andresbott.com>"
+    homepage: "https://github.com/candy-tools/edit"
+    description: "Keyboard-driven terminal text editor with a file sidebar and tabs"
+    license: "GPL-3.0"
+    section: editors
+    priority: optional
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/edit/copyright
+    deb:
+      # the go binary is statically linked (CGO_ENABLED=0); silence lintian.
+      lintian_overrides:
+        - statically-linked-binary
+
+homebrew_casks:
+  # publish a macOS cask into the dedicated tap repo (candy-tools/homebrew-tap,
+  # Casks/edit.rb). linux is distributed as a .deb and windows as a .zip, so a
+  # macOS-only cask is fine — and it's the non-deprecated successor to `brews`.
+  # pushing to a *different* repo needs a cross-repo PAT; the default
+  # GITHUB_TOKEN is scoped to this repo only. see HOMEBREW_TAP_GITHUB_TOKEN in
+  # .github/workflows/release.yml.
+  - name: edit
+    binaries:
+      - edit
+    repository:
+      owner: candy-tools
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    commit_author:
+      name: Andres Bott
+      email: contact@andresbott.com
+    homepage: "https://github.com/candy-tools/edit"
+    description: "Keyboard-driven terminal text editor with a file sidebar and tabs"
+    # the darwin binary isn't code-signed/notarized, so strip the Gatekeeper
+    # quarantine attribute on install to avoid an "edit is damaged" error.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/edit"]
+          end
+
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'

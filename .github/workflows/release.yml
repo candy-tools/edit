@@ -1,0 +1,67 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+
+# goreleaser needs write access to publish the release and upload assets
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # full history + tags are required for the changelog
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          # either 'goreleaser' (default) or 'goreleaser-pro'
+          distribution: goreleaser
+          # 'latest', 'nightly', or a semver
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # cross-repo PAT so goreleaser can push the cask to candy-tools/homebrew-tap
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      - name: Upload the .debs for the Debian repo
+        # after goreleaser writes the .deb into dist/, hand it to the apt job
+        # below. only the .debs: dist/ also holds the binaries and archives,
+        # and a flat artifact means "every release" of the Debian repo.
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs
+          path: dist/*.deb
+          if-no-files-found: error
+
+  # register the .deb with candy-tools/debian-repo through the
+  # gh-action-debian-repo engine: it writes packages/edit.json there and pushes
+  # it, which triggers a publish. the default GITHUB_TOKEN is scoped to this repo
+  # only, so it authenticates as the candy-tools GitHub App (org variable
+  # APT_APP_ID + secret APT_APP_PRIVATE_KEY), which mints a short-lived token
+  # scoped to debian-repo.
+  apt:
+    needs: release
+    permissions:
+      contents: read
+    uses: andresbott/gh-action-debian-repo/.github/workflows/publish.yml@v1.0.0-rc.2
+    with:
+      name: edit          # must match the .deb's Package field (nfpms package_name)
+      artifact: debs
+      collection: candy-tools/debian-repo
+      app-id: ${{ vars.APT_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.APT_APP_PRIVATE_KEY }}
