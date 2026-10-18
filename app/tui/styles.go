@@ -10,9 +10,9 @@ import (
 // Palette (256-colour), shared with the todo and dibs TUIs so the candy-tools
 // apps feel of a piece.
 var (
-	colAccent = lipgloss.Color("205") // hot pink: focus border + key hints + active tab
+	colAccent = lipgloss.Color("205") // hot pink: focus border + key hints + active tab + tree cursor
 	colDim    = lipgloss.Color("240") // gray: unfocused borders, inactive tabs, hints
-	colTitle  = lipgloss.Color("141") // purple: app name in the header
+	colTitle  = lipgloss.Color("141") // purple: app name in the header + folder names
 )
 
 var (
@@ -24,6 +24,14 @@ var (
 	// bold rather than accented, so it still stands out from the dim inactive
 	// tabs without competing with the focused pane's accent.
 	activeTabStyle = lipgloss.NewStyle().Bold(true)
+
+	// folderStyle marks a folder's name in the file tree, and
+	// selectedRowStyle draws the tree's cursor row while the sidebar has
+	// focus, both as in todo's tree. plainStyle is the identity style, for
+	// text drawn unstyled.
+	folderStyle      = lipgloss.NewStyle().Foreground(colTitle).Bold(true)
+	selectedRowStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	plainStyle       = lipgloss.NewStyle()
 
 	helpKeyStyle   = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	helpTextStyle  = lipgloss.NewStyle().Foreground(colDim)

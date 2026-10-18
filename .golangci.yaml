@@ -7,6 +7,7 @@ linters:
     - nestif
     - gosec
     - dupl
+    - depguard
 
   # exclude noisy linters on test files: structural checks plus gosec, whose
   # G304 fires on tests that read temp files they just wrote under t.TempDir().
@@ -19,6 +20,18 @@ linters:
           - gosec
 
   settings:
+    depguard:
+      # libs/ holds app-agnostic packages: the app may import them, never the
+      # other way round.
+      rules:
+        libs-agnostic:
+          files:
+            - "**/libs/**"
+          deny:
+            - pkg: github.com/candy-tools/edit/app
+              desc: libs/ must not depend on the app
+            - pkg: github.com/candy-tools/edit/internal
+              desc: libs/ must not depend on the app
     nolintlint:
       # Enable to require an explanation of nonzero length after each nolint directive.
       require-explanation: true

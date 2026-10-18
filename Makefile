@@ -18,9 +18,9 @@ license-check: ## check for invalid licenses
 
 COVERAGE_THRESHOLD ?= 70
 .PHONY: coverage
-coverage: ## check test coverage meets the threshold (app and internal; metainfo excluded: linker-stamped vars only)
+coverage: ## check test coverage meets the threshold (app, internal and libs; metainfo excluded: linker-stamped vars only)
 	@fail=0; \
-	for pkg in $$(go list ./app/... ./internal/... 2>/dev/null | grep -v '/app/metainfo$$'); do \
+	for pkg in $$(go list ./... | grep -E '/(app|internal|libs)/' | grep -v '/app/metainfo$$'); do \
 		go test -coverprofile=coverage.out -covermode=atomic $$pkg > /dev/null; \
 		if [ -f coverage.out ]; then \
 			coverage=$$(go tool cover -func=coverage.out | grep total: | awk '{print $$3}' | sed 's/%//'); \

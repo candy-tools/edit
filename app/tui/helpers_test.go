@@ -1,11 +1,22 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"testing/fstest"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// testFS is the workspace the model tests open: a folder and two files.
+var testFS = fstest.MapFS{
+	"app/main.go": {},
+	"go.mod":      {},
+	"README.md":   {},
+}
 
 // newTestModel returns a fresh model on a fixed workspace, sized to a 100x30
 // terminal.
 func newTestModel() model {
-	return send(newModel("/work/project"), tea.WindowSizeMsg{Width: 100, Height: 30})
+	return send(newModel("/work/project", testFS), tea.WindowSizeMsg{Width: 100, Height: 30})
 }
 
 // send applies msg and returns the updated model.
@@ -14,8 +25,8 @@ func send(m model, msg tea.Msg) model {
 	return nm.(model)
 }
 
-// press sends keystrokes by name ("tab", "ctrl+q", …); anything else is typed
-// as runes.
+// press sends keystrokes by name ("tab", "ctrl+q", "up", …); anything else is
+// typed as runes.
 func press(m model, keys ...string) model {
 	for _, k := range keys {
 		m = send(m, keyMsg(k))
@@ -23,15 +34,25 @@ func press(m model, keys ...string) model {
 	return m
 }
 
+// namedKeys are the keys keyMsg knows by name.
+var namedKeys = map[string]tea.KeyType{
+	"tab":    tea.KeyTab,
+	"ctrl+c": tea.KeyCtrlC,
+	"ctrl+q": tea.KeyCtrlQ,
+	"up":     tea.KeyUp,
+	"down":   tea.KeyDown,
+	"left":   tea.KeyLeft,
+	"right":  tea.KeyRight,
+	"enter":  tea.KeyEnter,
+	"pgup":   tea.KeyPgUp,
+	"pgdown": tea.KeyPgDown,
+	"home":   tea.KeyHome,
+	"end":    tea.KeyEnd,
+}
+
 func keyMsg(s string) tea.KeyMsg {
-	switch s {
-	case "tab":
-		return tea.KeyMsg{Type: tea.KeyTab}
-	case "ctrl+c":
-		return tea.KeyMsg{Type: tea.KeyCtrlC}
-	case "ctrl+q":
-		return tea.KeyMsg{Type: tea.KeyCtrlQ}
-	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	if k, ok := namedKeys[s]; ok {
+		return tea.KeyMsg{Type: k}
 	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
