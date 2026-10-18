@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -18,8 +19,8 @@ func TestNewModelStartState(t *testing.T) {
 	if m.focus != paneSidebar {
 		t.Errorf("start focus = %v, want the sidebar", m.focus)
 	}
-	if len(m.tabs) != 1 || m.tabs[0].title != "untitled" || m.active != 0 {
-		t.Errorf("start tabs = %+v (active %d), want a single active untitled tab", m.tabs, m.active)
+	if m.tabs.Len() != 0 {
+		t.Errorf("start tabs = %d, want none open", m.tabs.Len())
 	}
 	if m.Init() != nil {
 		t.Error("Init should not schedule any command")
@@ -65,6 +66,13 @@ func TestLettersAreNotCommands(t *testing.T) {
 	if got := ansi.Strip(m.sidebarBody()); got != tree {
 		t.Errorf("letters must not drive the tree, got\n%s\nwant\n%s", got, tree)
 	}
+	m = openBig(30)
+	text := editorText(m)
+	m = press(m, "j", "k", "f", "b", "G", " ")
+	if got := editorText(m); !slices.Equal(got, text) {
+		t.Errorf("letters must not scroll an open file, got\n%s\nwant\n%s",
+			strings.Join(got, "\n"), strings.Join(text, "\n"))
+	}
 }
 
 func TestViewFillsTerminal(t *testing.T) {
@@ -92,8 +100,8 @@ func TestViewChrome(t *testing.T) {
 	if want := "edit " + metainfo.Version + "  /work/project"; !strings.Contains(lines[0], want) {
 		t.Errorf("header %q should contain %q", lines[0], want)
 	}
-	if !strings.Contains(lines[1], "Files") || !strings.Contains(lines[1], "untitled") {
-		t.Errorf("top border %q should carry the sidebar title and the tab strip", lines[1])
+	if !strings.Contains(lines[1], "Files") {
+		t.Errorf("top border %q should carry the sidebar title", lines[1])
 	}
 	footer := lines[len(lines)-1]
 	for _, want := range []string{"tab: Focus", "ctrl+q: Quit"} {
@@ -118,12 +126,45 @@ func TestSidebarWidth(t *testing.T) {
 	}
 }
 
-func TestTabStripListsTabsInOrder(t *testing.T) {
-	m := press(newTestModel(), "tab") // focus the editor
-	m.tabs = []tab{{title: "main.go"}, {title: "go.mod"}, {title: "README.md"}}
-	m.active = 1
-	if got, want := ansi.Strip(m.tabStrip()), " main.go ─ go.mod ─ README.md "; got != want {
-		t.Errorf("tab strip = %q, want %q", got, want)
+// topBorder is the top line of m's view, which holds the sidebar's title and
+// the tab strip, without styling.
+func topBorder(m model) string {
+	return ansi.Strip(strings.Split(m.View(), "\n")[1])
+}
+
+// openDocs opens a tab in m for each path, in order, holding a document with
+// a note instead of text, so the last one is active.
+func openDocs(m model, paths ...string) model {
+	for _, p := range paths {
+		m.tabs.Open(p, func() *document { return &document{path: p, note: "test"} })
+	}
+	return m
+}
+
+func TestTheEditorBorderCarriesTheTabStrip(t *testing.T) {
+	m := openDocs(newTestModel(), "app/main.go", "go.mod", "README.md")
+	if top, want := topBorder(m), "╭─ main.go ─ go.mod ─ README.md ─"; !strings.Contains(top, want) {
+		t.Errorf("top border %q should hold the tab strip %q", top, want)
+	}
+}
+
+func TestNoTabOpenLeavesThePlainBorder(t *testing.T) {
+	if got, want := string([]rune(topBorder(newTestModel()))[30:]), "╭"+strings.Repeat("─", 68)+"╮"; got != want {
+		t.Errorf("editor's top border = %q, want a plain line", got)
+	}
+}
+
+// eightFiles are the paths of eight tabs that take 8 cells each in the strip.
+var eightFiles = []string{"f0.go", "f1.go", "f2.go", "f3.go", "f4.go", "f5.go", "f6.go", "f7.go"}
+
+func TestTheTabStripFollowsTheTerminalWidth(t *testing.T) {
+	m := openDocs(newTestModel(), eightFiles...) // 64 cells of tabs, 62 to show them in
+	if top, want := topBorder(m), "╭─…─ f1.go ─"; !strings.Contains(top, want) {
+		t.Errorf("at 100 columns the top border %q should hide f0.go: want %q", top, want)
+	}
+	m = send(m, tea.WindowSizeMsg{Width: 200, Height: 30})
+	if top, want := topBorder(m), "╭─ f0.go ─"; !strings.Contains(top, want) {
+		t.Errorf("at 200 columns the top border %q should show every tab: want %q", top, want)
 	}
 }
 
@@ -221,19 +262,26 @@ func TestTreeKeysNeedSidebarFocus(t *testing.T) {
 	}
 }
 
-func TestFooterHintsFollowFocus(t *testing.T) {
+func TestFooterHintsFollowFocusAndOpenTabs(t *testing.T) {
 	footer := func(m model) string {
 		lines := strings.Split(ansi.Strip(m.View()), "\n")
 		return lines[len(lines)-1]
 	}
-	m := newTestModel()
-	for _, want := range []string{"↑↓: Move", "←→: Fold", "tab: Focus", "ctrl+q: Quit"} {
-		if !strings.Contains(footer(m), want) {
-			t.Errorf("sidebar focused: footer %q should contain %q", footer(m), want)
+	// Each case starts from its own model: copies of a model share its tree
+	// and tab set.
+	for _, c := range []struct {
+		name string
+		m    model
+		want string
+	}{
+		{"sidebar focused", newTestModel(), " ↑↓: Move  ←→: Fold  enter: Open  tab: Focus  ctrl+q: Quit"},
+		{"editor focused, no tab open", press(newTestModel(), "tab"), " tab: Focus  ctrl+q: Quit"},
+		{"editor focused, a tab open", press(newTestModel(), "down", "enter"),
+			" ↑↓: Scroll  ctrl+pgup/pgdn: Tabs  ctrl+w: Close  tab: Focus  ctrl+q: Quit"},
+	} {
+		if got := footer(c.m); got != c.want {
+			t.Errorf("%s: footer = %q, want %q", c.name, got, c.want)
 		}
-	}
-	if f := footer(press(m, "tab")); strings.Contains(f, "Move") || strings.Contains(f, "Fold") {
-		t.Errorf("editor focused: footer %q should not offer the tree keys", f)
 	}
 }
 
@@ -299,6 +347,251 @@ func TestUnsafeNamesKeepOneRowPerEntry(t *testing.T) {
 	for i, l := range lines[1 : len(lines)-1] {
 		if w := lipgloss.Width(l); w != 100 {
 			t.Errorf("body line %d is %d cells wide, want 100", i+1, w)
+		}
+	}
+}
+
+// bigFS is a workspace holding one file of 100 numbered lines.
+var bigFS = fstest.MapFS{"big.txt": {Data: []byte(numberedLines(100))}}
+
+// openBig returns a model on bigFS, 100 columns wide and h rows tall, with
+// big.txt open and the editor focused.
+func openBig(h int) model {
+	return press(send(newModel("/w", bigFS), tea.WindowSizeMsg{Width: 100, Height: h}), "enter")
+}
+
+// editorText is the editor pane's body as m's view draws it, one string per
+// row, without the box's borders, its trailing padding or styling.
+func editorText(m model) []string {
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	w, _ := m.size()
+	sw := sidebarWidth(w)
+	var rows []string
+	for _, l := range lines[2 : len(lines)-2] { // between the boxes' top and bottom borders
+		r := []rune(l)
+		rows = append(rows, strings.TrimRight(string(r[sw+1:w-1]), " "))
+	}
+	return rows
+}
+
+// activeKey is the path of m's active tab, or "" when no tab is open.
+func activeKey(m model) string {
+	t, _ := m.tabs.Active()
+	return t.Key
+}
+
+// threeTabs is newTestModel with every file of testFS open, in tree order:
+// app/main.go, go.mod, then README.md, which is active, with the editor
+// focused.
+func threeTabs() model {
+	return press(newTestModel(), "right", "down", "enter", "tab", "down", "enter", "tab", "down", "enter")
+}
+
+func TestEnterOpensAFileInATab(t *testing.T) {
+	m := press(newTestModel(), "down", "enter") // the cursor on go.mod
+	if m.focus != paneEditor {
+		t.Errorf("after enter focus = %v, want the editor", m.focus)
+	}
+	if got, want := editorText(m)[:4], []string{" 1 module example.com/project", " 2", " 3 go 1.26", ""}; !slices.Equal(got, want) {
+		t.Errorf("editor = %q, want %q", got, want)
+	}
+	if top, want := topBorder(m), "╭─ go.mod ─"; !strings.Contains(top, want) {
+		t.Errorf("top border %q should hold the tab %q", top, want)
+	}
+}
+
+// The flow this feature was asked for: opening a second file leaves the first
+// one open in its own tab.
+func TestOpeningASecondFileKeepsTheFirstOpen(t *testing.T) {
+	m := press(newTestModel(), "down", "enter", "tab", "down", "enter") // go.mod, then README.md
+	tabs, active := m.tabs.Tabs()
+	if len(tabs) != 2 || tabs[0].Key != "go.mod" || tabs[1].Key != "README.md" || active != 1 {
+		t.Fatalf("tabs = %+v (active %d), want go.mod then README.md, README.md active", tabs, active)
+	}
+	if top, want := topBorder(m), "╭─ go.mod ─ README.md ─"; !strings.Contains(top, want) {
+		t.Errorf("top border %q should hold both tabs: %q", top, want)
+	}
+	if got, want := editorText(m)[0], " 1 # project"; got != want {
+		t.Errorf("editor's first row = %q, want %q", got, want)
+	}
+}
+
+// countingFS is a filesystem that counts how many times each file is opened.
+type countingFS struct {
+	fstest.MapFS
+	opens map[string]int
+}
+
+func (c countingFS) Open(name string) (fs.File, error) {
+	c.opens[name]++
+	return c.MapFS.Open(name)
+}
+
+func TestEnterOnAnOpenFileSwitchesToItsTab(t *testing.T) {
+	fsys := countingFS{MapFS: testFS, opens: map[string]int{}}
+	m := send(newModel("/work/project", fsys), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "down", "enter", "tab", "down", "enter", "tab", "up", "enter") // go.mod, README.md, go.mod
+	if tabs, active := m.tabs.Tabs(); len(tabs) != 2 || active != 0 {
+		t.Errorf("tabs = %+v (active %d), want the two tabs with go.mod active", tabs, active)
+	}
+	if fsys.opens["go.mod"] != 1 {
+		t.Errorf("go.mod was read %d times, want once", fsys.opens["go.mod"])
+	}
+	if m.focus != paneEditor {
+		t.Errorf("focus = %v, want the editor", m.focus)
+	}
+}
+
+func TestEnterOnAFolderOpensNoTab(t *testing.T) {
+	m := press(newTestModel(), "enter") // the cursor on app
+	if m.tabs.Len() != 0 || m.focus != paneSidebar {
+		t.Errorf("enter on a folder: %d tabs, focus %v; want none and the sidebar", m.tabs.Len(), m.focus)
+	}
+	if got, want := sidebarRows(m), []string{"❯ ▾ app", "      main.go", "    go.mod", "    README.md"}; !slices.Equal(got, want) {
+		t.Errorf("sidebar = %q, want the folder opened: %q", got, want)
+	}
+}
+
+func TestEnterOnAnErrorRowDoesNothing(t *testing.T) {
+	m := press(newModel("/w", deniedFS{}), "enter")
+	if m.tabs.Len() != 0 || m.focus != paneSidebar {
+		t.Errorf("enter on an error row: %d tabs, focus %v; want none and the sidebar", m.tabs.Len(), m.focus)
+	}
+}
+
+func TestTheEditorShowsAHintWithNoFileOpen(t *testing.T) {
+	if got, want := editorText(newTestModel())[0], " Select a file and press enter to open it"; got != want {
+		t.Errorf("editor's first row = %q, want %q", got, want)
+	}
+}
+
+func TestCtrlPgUpAndPgDownSwitchTabs(t *testing.T) {
+	m := threeTabs()
+	for _, step := range []struct{ key, want string }{
+		{"ctrl+pgdown", "app/main.go"}, // wraps around
+		{"ctrl+pgdown", "go.mod"},
+		{"ctrl+pgup", "app/main.go"},
+		{"ctrl+pgup", "README.md"}, // wraps around
+	} {
+		m = press(m, step.key)
+		if got := activeKey(m); got != step.want {
+			t.Errorf("after %s the active tab is %q, want %q", step.key, got, step.want)
+		}
+	}
+	m = press(m, "tab", "ctrl+pgdown") // from the sidebar too
+	if got := activeKey(m); got != "app/main.go" || m.focus != paneSidebar {
+		t.Errorf("from the sidebar: active %q, focus %v; want app/main.go, the sidebar still focused", got, m.focus)
+	}
+	if got, want := editorText(m)[0], " 1 package main"; got != want {
+		t.Errorf("editor's first row = %q, want the active tab's text %q", got, want)
+	}
+}
+
+func TestCtrlWClosesTheActiveTab(t *testing.T) {
+	m := press(threeTabs(), "ctrl+pgup") // go.mod, in the middle
+	for _, want := range []string{"README.md", "app/main.go", ""} {
+		m = press(m, "ctrl+w")
+		if got := activeKey(m); got != want {
+			t.Errorf("after ctrl+w the active tab is %q, want %q", got, want)
+		}
+	}
+	if m.focus != paneSidebar {
+		t.Errorf("closing the last tab should focus the sidebar, focus = %v", m.focus)
+	}
+	if got, want := editorText(m)[0], " Select a file and press enter to open it"; got != want {
+		t.Errorf("editor's first row = %q, want the hint %q", got, want)
+	}
+	m = press(m, "ctrl+w") // nothing left to close
+	if m.tabs.Len() != 0 {
+		t.Errorf("ctrl+w with no tab open: %d tabs", m.tabs.Len())
+	}
+}
+
+func TestScrollKeysNeedEditorFocus(t *testing.T) {
+	m := openBig(30) // a page is 26 lines: the last one starts at line 75
+	for _, step := range []struct{ key, want string }{
+		{"down", "   2 line 2"},
+		{"pgdown", "  28 line 28"},
+		{"end", "  75 line 75"},
+		{"pgup", "  49 line 49"},
+		{"home", "   1 line 1"},
+	} {
+		m = press(m, step.key)
+		if got := editorText(m)[0]; got != step.want {
+			t.Errorf("after %s the first row is %q, want %q", step.key, got, step.want)
+		}
+	}
+	m = press(m, "tab", "down", "end") // the sidebar focused: the text stays put
+	if got, want := editorText(m)[0], "   1 line 1"; got != want {
+		t.Errorf("with the sidebar focused the first row is %q, want %q", got, want)
+	}
+}
+
+func TestEachTabKeepsItsScrollPosition(t *testing.T) {
+	lines := []byte(numberedLines(100))
+	fsys := fstest.MapFS{"a.txt": {Data: lines}, "b.txt": {Data: lines}}
+	m := send(newModel("/w", fsys), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "enter", "down", "down", "down", "down", "down") // a.txt, scrolled 5 lines
+	m = press(m, "tab", "down", "enter")                          // b.txt, at the top
+	if got, want := editorText(m)[0], "   1 line 1"; got != want {
+		t.Errorf("b.txt's first row = %q, want %q", got, want)
+	}
+	m = press(m, "ctrl+pgup") // back to a.txt
+	if got, want := editorText(m)[0], "   6 line 6"; got != want {
+		t.Errorf("a.txt's first row = %q, want %q: it should keep its scroll position", got, want)
+	}
+}
+
+func TestResizeSetsTheTextWindowHeight(t *testing.T) {
+	m := send(openBig(30), tea.WindowSizeMsg{Width: 100, Height: 10})
+	m = press(m, "end") // a 6-line window: the last page starts at line 95
+	rows := editorText(m)
+	if len(rows) != 6 || rows[0] != "  95 line 95" || rows[5] != " 100 line 100" {
+		t.Errorf("after a resize to 10 rows and end, editor = %q; want lines 95 to 100", rows)
+	}
+}
+
+func TestAFileOpenedBeforeTheFirstResizeFillsTheDefaultPane(t *testing.T) {
+	m := press(newModel("/w", bigFS), "enter", "end") // 80x24: a 20-line window
+	rows := editorText(m)
+	if len(rows) != 20 || rows[0] != "  81 line 81" || rows[19] != " 100 line 100" {
+		t.Errorf("editor = %q; want lines 81 to 100", rows)
+	}
+}
+
+// Review focus: a tiny terminal still shows one line of the open file, and
+// scrolling moves it.
+func TestTinyTerminalShowsOneLineOfText(t *testing.T) {
+	m := press(send(newModel("/w", bigFS), tea.WindowSizeMsg{Width: 40, Height: 3}), "enter", "down")
+	if rows := editorText(m); len(rows) != 1 || rows[0] != "   2 line 2" {
+		t.Errorf("editor = %q, want just line 2", rows)
+	}
+}
+
+// Review focus: file names and text with wide characters, tabs, escape codes
+// and invalid UTF-8, more tabs than fit, and odd or narrow widths still give
+// lines exactly as wide as the screen, and no escape code from a file reaches
+// the terminal.
+func TestOpenFilesKeepTheLayout(t *testing.T) {
+	text := strings.Repeat("日本\tx\x1b[2J", 40) + "\n" + strings.Repeat("a", 500) + "\n\xff\xfe broken\n"
+	fsys := fstest.MapFS{}
+	for i := range 12 {
+		fsys[fmt.Sprintf("ファイル-%02d.txt", i)] = &fstest.MapFile{Data: []byte(text)}
+	}
+	m := send(newModel("/w", fsys), tea.WindowSizeMsg{Width: 83, Height: 12})
+	for range 12 {
+		m = press(m, "enter", "tab", "down") // open each file in turn
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "?[2J") {
+		t.Error("an escape code in a file should be drawn as ?, not sent to the terminal")
+	}
+	for _, w := range []int{83, 40, 12} {
+		m = send(m, tea.WindowSizeMsg{Width: w, Height: 12})
+		lines := strings.Split(m.View(), "\n")
+		for i, l := range lines[1 : len(lines)-1] {
+			if got := lipgloss.Width(l); got != w {
+				t.Errorf("width %d: body line %d is %d cells wide", w, i+1, got)
+			}
 		}
 	}
 }

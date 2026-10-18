@@ -33,6 +33,9 @@ var (
 	selectedRowStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	plainStyle       = lipgloss.NewStyle()
 
+	// lineNumberStyle draws the line numbers in the editor pane's gutter.
+	lineNumberStyle = lipgloss.NewStyle().Foreground(colDim)
+
 	helpKeyStyle   = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	helpTextStyle  = lipgloss.NewStyle().Foreground(colDim)
 	headerAppStyle = lipgloss.NewStyle().Foreground(colTitle).Bold(true)

@@ -8,9 +8,9 @@ import (
 
 // testFS is the workspace the model tests open: a folder and two files.
 var testFS = fstest.MapFS{
-	"app/main.go": {},
-	"go.mod":      {},
-	"README.md":   {},
+	"app/main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
+	"go.mod":      {Data: []byte("module example.com/project\n\ngo 1.26\n")},
+	"README.md":   {Data: []byte("# project\n")},
 }
 
 // newTestModel returns a fresh model on a fixed workspace, sized to a 100x30
@@ -36,18 +36,21 @@ func press(m model, keys ...string) model {
 
 // namedKeys are the keys keyMsg knows by name.
 var namedKeys = map[string]tea.KeyType{
-	"tab":    tea.KeyTab,
-	"ctrl+c": tea.KeyCtrlC,
-	"ctrl+q": tea.KeyCtrlQ,
-	"up":     tea.KeyUp,
-	"down":   tea.KeyDown,
-	"left":   tea.KeyLeft,
-	"right":  tea.KeyRight,
-	"enter":  tea.KeyEnter,
-	"pgup":   tea.KeyPgUp,
-	"pgdown": tea.KeyPgDown,
-	"home":   tea.KeyHome,
-	"end":    tea.KeyEnd,
+	"tab":         tea.KeyTab,
+	"ctrl+c":      tea.KeyCtrlC,
+	"ctrl+q":      tea.KeyCtrlQ,
+	"up":          tea.KeyUp,
+	"down":        tea.KeyDown,
+	"left":        tea.KeyLeft,
+	"right":       tea.KeyRight,
+	"enter":       tea.KeyEnter,
+	"pgup":        tea.KeyPgUp,
+	"pgdown":      tea.KeyPgDown,
+	"home":        tea.KeyHome,
+	"end":         tea.KeyEnd,
+	"ctrl+pgup":   tea.KeyCtrlPgUp,
+	"ctrl+pgdown": tea.KeyCtrlPgDown,
+	"ctrl+w":      tea.KeyCtrlW,
 }
 
 func keyMsg(s string) tea.KeyMsg {

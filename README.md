@@ -4,8 +4,9 @@ A keyboard-driven text editor for the terminal, laid out like an IDE: a file
 sidebar on the left and the open files as tabs on the right.
 
 > **Status:** early bootstrap. The layout is in place — header, file sidebar,
-> tabbed editor pane and key-hint footer — and the sidebar browses the
-> workspace as a folder tree, but nothing can be opened or edited yet.
+> tabbed editor pane and key-hint footer. The sidebar browses the workspace
+> as a folder tree and opens files, read-only, in tabs; nothing can be edited
+> yet.
 
 Built with the [Charm](https://charm.sh) stack: [Bubble Tea](https://github.com/charmbracelet/bubbletea)
 and [Lipgloss](https://github.com/charmbracelet/lipgloss), with [Cobra](https://github.com/spf13/cobra)
@@ -20,16 +21,21 @@ edit    # opens the current directory as the workspace
 | Key | Action |
 |-----|--------|
 | `tab` | Switch focus between the file sidebar and the editor |
-| `↑` / `↓` | Move through the file tree |
-| `pgup` / `pgdown` | Move a page up / down |
-| `home` / `end` | Jump to the first / last entry |
+| `↑` / `↓` | Move through the file tree, or scroll the open file a line |
+| `pgup` / `pgdown` | Move or scroll a page up / down |
+| `home` / `end` | Jump to the first / last entry, or the top / bottom of the file |
 | `→` | Expand a folder; on an open folder, step into it |
 | `←` | Collapse a folder; elsewhere, go to the parent folder |
-| `enter` | Expand or collapse a folder |
+| `enter` | Open a file in a tab, or expand / collapse a folder |
+| `ctrl+pgdown` / `ctrl+pgup` | Switch to the next / previous tab |
+| `ctrl+w` | Close the active tab |
 | `ctrl+q` / `ctrl+c` | Quit |
 
-The file tree keys work while the sidebar has focus. The tree lists hidden
-files too, and reads a folder from disk each time it is expanded.
+The file tree keys work while the sidebar has focus, and the scroll keys while
+the editor has focus; the tab keys work in either. The tree lists hidden files
+too, and reads a folder from disk each time it is expanded. A file is read
+when its tab opens: to see later changes on disk, close the tab and open the
+file again.
 
 ## Install
 
@@ -85,9 +91,10 @@ make coverage     # enforce the per-package coverage threshold
 make verify       # all of the above plus the license check
 ```
 
-Packages under `libs/` (such as `libs/treeview`) are app-agnostic: they must
-never import `app/` or `internal/`. A depguard rule in `.golangci.yaml`
-enforces this, so `make lint` fails on a wrong-way import.
+Packages under `libs/` (`libs/treeview`, `libs/tabset` and `libs/textview`)
+are app-agnostic: they must never import `app/` or `internal/`. A depguard
+rule in `.golangci.yaml` enforces this, so `make lint` fails on a wrong-way
+import.
 
 ### Run
 
