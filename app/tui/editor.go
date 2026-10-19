@@ -7,6 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/candy-tools/edit/libs/keymap"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -38,26 +39,26 @@ func editorBody(doc *document, width int) string {
 	return strings.Join(out, "\n")
 }
 
-// editorKey applies a key pressed while the editor has focus to doc, the
-// active tab's document: the arrows, page keys and home/end scroll its text.
-// Other keys do nothing, and so does every key with no tab open (doc is nil)
-// or on a document showing a note.
-func editorKey(doc *document, key string) {
+// editorAction applies an action of the editor to doc, the active tab's
+// document: up, down, page-up, page-down, top and bottom scroll its text.
+// Other actions do nothing, and so does every action with no tab open (doc
+// is nil) or on a document showing a note.
+func editorAction(doc *document, id keymap.ID) {
 	if doc == nil || doc.text == nil {
 		return
 	}
-	switch key {
-	case "up":
+	switch id {
+	case editorUp:
 		doc.text.Up()
-	case "down":
+	case editorDown:
 		doc.text.Down()
-	case "pgup":
+	case editorPageUp:
 		doc.text.PageUp()
-	case "pgdown":
+	case editorPageDown:
 		doc.text.PageDown()
-	case "home":
+	case editorTop:
 		doc.text.Top()
-	case "end":
+	case editorBottom:
 		doc.text.Bottom()
 	}
 }

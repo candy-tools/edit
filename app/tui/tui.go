@@ -2,7 +2,8 @@
 // left and the open files as tabs in an editor pane on the right, framed by a
 // header and a key-hint footer. The sidebar browses the workspace as a folder
 // tree, and enter opens a file, read-only for now, in a tab of the editor
-// pane.
+// pane. Keys are looked up in a keymap, which the user can rebind in the
+// config file.
 package tui
 
 import (
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/candy-tools/edit/app/metainfo"
+	"github.com/candy-tools/edit/libs/keymap"
 	"github.com/candy-tools/edit/libs/tabset"
 	"github.com/candy-tools/edit/libs/treeview"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +29,15 @@ const (
 	paneEditor
 )
 
+// scope is the keymap scope whose actions work while p has focus, next to
+// the global ones.
+func (p pane) scope() string {
+	if p == paneEditor {
+		return scopeEditor
+	}
+	return scopeSidebar
+}
+
 // defaultWidth and defaultHeight are the terminal size assumed until the
 // first tea.WindowSizeMsg arrives.
 const defaultWidth, defaultHeight = 80, 24
@@ -38,22 +49,24 @@ type model struct {
 	height  int
 
 	focus pane                           // the pane that receives keys, drawn with an accent border
+	keys  *keymap.Map                    // which action each key triggers
 	fsys  fs.FS                          // the workspace, read when a file opens
 	files *treeview.Tree[entry]          // the sidebar's file tree over the workspace
 	tabs  *tabset.Set[string, *document] // the open files, keyed by path
 }
 
-// Run starts the interactive editor on the workspace directory root.
-func Run(root string) error {
-	_, err := tea.NewProgram(newModel(root, os.DirFS(root)), tea.WithAltScreen()).Run()
+// Run starts the interactive editor on the workspace directory root, with
+// keys bound as keys says.
+func Run(root string, keys *keymap.Map) error {
+	_, err := tea.NewProgram(newModel(root, os.DirFS(root), keys), tea.WithAltScreen()).Run()
 	return err
 }
 
 // newModel builds the start-up state: the sidebar focused on the file tree of
-// fsys — the workspace at root — and no tab open. Split out from Run so tests
-// can drive the model on an in-memory filesystem without starting a real
-// terminal program.
-func newModel(root string, fsys fs.FS) model {
+// fsys — the workspace at root — and no tab open, with keys bound as keys
+// says. Split out from Run so tests can drive the model on an in-memory
+// filesystem without starting a real terminal program.
+func newModel(root string, fsys fs.FS, keys *keymap.Map) model {
 	files := treeview.New(workspace{fsys}, rootEntry)
 	files.SetHeight(paneHeight(defaultHeight))
 	tabs := tabset.New(measureTabs)
@@ -62,6 +75,7 @@ func newModel(root string, fsys fs.FS) model {
 		root:    root,
 		version: metainfo.Version,
 		focus:   paneSidebar,
+		keys:    keys,
 		fsys:    fsys,
 		files:   files,
 		tabs:    tabs,
@@ -81,45 +95,63 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.tabs.SetWidth(stripWidth(msg.Width))
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "ctrl+q":
-			return m, tea.Quit
-		case "tab":
-			if m.focus == paneSidebar {
-				m.focus = paneEditor
-			} else {
-				m.focus = paneSidebar
+		// A key held down, or keys typed fast, can arrive as one message:
+		// each press acts in turn, in the pane that has focus by then.
+		for _, k := range keymap.Presses(msg) {
+			var cmd tea.Cmd
+			if m, cmd = m.keyPress(k); cmd != nil {
+				return m, cmd
 			}
-		case "ctrl+pgdown":
-			m.tabs.Next()
-		case "ctrl+pgup":
-			m.tabs.Prev()
-		case "ctrl+w":
-			m.tabs.Close()
-			if m.tabs.Len() == 0 {
-				m.focus = paneSidebar
-			}
-		default:
-			m = m.paneKey(msg.String())
 		}
 	}
 	return m, nil
 }
 
-// paneKey applies a key that is not global to the focused pane: enter on a
-// file opens it, other sidebar keys drive the file tree, and editor keys
+// keyPress applies one key press: the action it triggers in the focused
+// pane, if any. Only quit returns a command.
+func (m model) keyPress(msg tea.KeyMsg) (model, tea.Cmd) {
+	id, ok := m.keys.Lookup(m.focus.scope(), msg)
+	if !ok {
+		return m, nil
+	}
+	switch id {
+	case actQuit:
+		return m, tea.Quit
+	case actSwitchFocus:
+		if m.focus == paneSidebar {
+			m.focus = paneEditor
+		} else {
+			m.focus = paneSidebar
+		}
+	case actNextTab:
+		m.tabs.Next()
+	case actPreviousTab:
+		m.tabs.Prev()
+	case actCloseTab:
+		m.tabs.Close()
+		if m.tabs.Len() == 0 {
+			m.focus = paneSidebar
+		}
+	default:
+		m = m.paneAction(id)
+	}
+	return m, nil
+}
+
+// paneAction applies an action of the focused pane: sidebar.open on a file
+// opens it, other sidebar actions drive the file tree, and editor actions
 // scroll the active tab's text.
-func (m model) paneKey(key string) model {
+func (m model) paneAction(id keymap.ID) model {
 	if m.focus == paneEditor {
-		editorKey(m.activeDocument(), key)
+		editorAction(m.activeDocument(), id)
 		return m
 	}
-	if key == "enter" {
+	if id == sidebarOpen {
 		if row, ok := m.files.Selected(); ok && row.Err == nil && !row.Branch {
 			return m.open(row.Node)
 		}
 	}
-	sidebarKey(m.files, key)
+	sidebarAction(m.files, id)
 	return m
 }
 
@@ -194,16 +226,27 @@ func (m model) header(width int) string {
 
 // footer lists the key hints: the file tree's while the sidebar has focus,
 // the scroll and tab keys while the editor has focus and a tab is open, then
-// the global ones.
+// the global ones. Each hint shows the keys its actions are bound to, and a
+// hint whose actions have no keys is left out.
 func (m model) footer(width int) string {
 	var parts []string
+	add := func(label string, ids ...keymap.ID) {
+		if keys := m.keys.Label(ids...); keys != "" {
+			parts = append(parts, hint(keys, label))
+		}
+	}
 	switch {
 	case m.focus == paneSidebar:
-		parts = append(parts, hint("↑↓", "Move"), hint("←→", "Fold"), hint("enter", "Open"))
+		add("Move", sidebarUp, sidebarDown)
+		add("Fold", sidebarCollapse, sidebarExpand)
+		add("Open", sidebarOpen)
 	case m.tabs.Len() > 0:
-		parts = append(parts, hint("↑↓", "Scroll"), hint("ctrl+pgup/pgdn", "Tabs"), hint("ctrl+w", "Close"))
+		add("Scroll", editorUp, editorDown)
+		add("Tabs", actPreviousTab, actNextTab)
+		add("Close", actCloseTab)
 	}
-	parts = append(parts, hint("tab", "Focus"), hint("ctrl+q", "Quit"))
+	add("Focus", actSwitchFocus)
+	add("Quit", actQuit)
 	return ansi.Truncate(" "+strings.Join(parts, "  "), width, "")
 }
 

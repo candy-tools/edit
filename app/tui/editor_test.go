@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/candy-tools/edit/libs/keymap"
 	"github.com/candy-tools/edit/libs/textview"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -109,26 +110,26 @@ func TestEditorBodyWithoutText(t *testing.T) {
 	}
 }
 
-func TestEditorKeysScrollTheText(t *testing.T) {
+func TestEditorActionsScrollTheText(t *testing.T) {
 	doc := textDoc("f", numberedLines(10), 3) // the last page starts at line 7
 	for _, step := range []struct {
-		key   string
+		id    keymap.ID
 		first int
 	}{
-		{"down", 1},
-		{"pgdown", 4},
-		{"end", 7},
-		{"up", 6},
-		{"pgup", 3},
-		{"home", 0},
-		{"j", 0},
-		{"enter", 0},
+		{editorDown, 1},
+		{editorPageDown, 4},
+		{editorBottom, 7},
+		{editorUp, 6},
+		{editorPageUp, 3},
+		{editorTop, 0},
+		{sidebarDown, 0}, // not an editor action: nothing
+		{actQuit, 0},
 	} {
-		editorKey(doc, step.key)
+		editorAction(doc, step.id)
 		if _, first := doc.text.Window(); first != step.first {
-			t.Errorf("after %s the window starts at line %d, want %d", step.key, first, step.first)
+			t.Errorf("after %s the window starts at line %d, want %d", step.id, first, step.first)
 		}
 	}
-	editorKey(nil, "down")                            // no tab open: nothing
-	editorKey(&document{note: "binary file"}, "down") // a note: nothing
+	editorAction(nil, editorDown)                            // no tab open: nothing
+	editorAction(&document{note: "binary file"}, editorDown) // a note: nothing
 }

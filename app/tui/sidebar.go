@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/candy-tools/edit/libs/keymap"
 	"github.com/candy-tools/edit/libs/treeview"
 )
 
@@ -15,28 +16,29 @@ func (m model) sidebarBody() string {
 	return treeLines(rows, cursor, m.focus == paneSidebar)
 }
 
-// sidebarKey applies a key pressed while the sidebar has focus to the file
-// tree: the arrows, page keys and home/end move the cursor, → and ← expand
-// and collapse, enter opens or closes a folder. Other keys do nothing.
-func sidebarKey(files *treeview.Tree[entry], key string) {
-	switch key {
-	case "up":
+// sidebarAction applies an action of the sidebar to the file tree: up, down,
+// page-up, page-down, top and bottom move the cursor, expand and collapse
+// open and close folders, and open, which reaches here on anything but a
+// file, opens or closes a folder. Other actions do nothing.
+func sidebarAction(files *treeview.Tree[entry], id keymap.ID) {
+	switch id {
+	case sidebarUp:
 		files.Up()
-	case "down":
+	case sidebarDown:
 		files.Down()
-	case "pgup":
+	case sidebarPageUp:
 		files.PageUp()
-	case "pgdown":
+	case sidebarPageDown:
 		files.PageDown()
-	case "home":
+	case sidebarTop:
 		files.Top()
-	case "end":
+	case sidebarBottom:
 		files.Bottom()
-	case "right":
+	case sidebarExpand:
 		files.Expand()
-	case "left":
+	case sidebarCollapse:
 		files.Collapse()
-	case "enter":
+	case sidebarOpen:
 		files.Toggle()
 	}
 }

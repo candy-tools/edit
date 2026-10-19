@@ -1,13 +1,18 @@
-// Package cmd is the command-line entry point: it parses `edit` and launches
-// the interactive TUI on the current directory.
+// Package cmd is the command-line entry point: it parses `edit`, reads the
+// config file and launches the interactive TUI on the current directory.
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 
+	"github.com/candy-tools/edit/app/config"
 	"github.com/candy-tools/edit/app/metainfo"
 	"github.com/candy-tools/edit/app/tui"
+	"github.com/candy-tools/edit/libs/keymap"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +20,11 @@ import (
 // package variable so tests can stub it and exercise the command wiring
 // without a terminal.
 var runTUI = tui.Run
+
+// defaultConfigPath is where edit looks for its config file without
+// --config. It is a package variable so tests can point it at a temporary
+// file, whatever the OS's config directory.
+var defaultConfigPath = config.DefaultPath
 
 // Execute is the entry point for the command line.
 func Execute() {
@@ -25,6 +35,7 @@ func Execute() {
 }
 
 func newRootCommand() *cobra.Command {
+	var configPath string
 	cmd := &cobra.Command{
 		Use:           "edit",
 		Short:         "A terminal text editor",
@@ -34,13 +45,54 @@ func newRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(*cobra.Command, []string) error {
+			keys, err := loadKeymap(configPath)
+			if err != nil {
+				return err
+			}
 			root, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			return runTUI(root)
+			return runTUI(root, keys)
 		},
 	}
+	cmd.Flags().StringVar(&configPath, "config", "", configUsage())
 	cmd.AddCommand(versionCmd())
 	return cmd
+}
+
+// configUsage is the help of the --config flag, which names the file edit
+// reads without it.
+func configUsage() string {
+	where := "edit/config.yaml in the user config directory"
+	if path, err := defaultConfigPath(); err == nil {
+		where = path
+	}
+	return "read the settings from the config file at `path` (default " + where + ")"
+}
+
+// loadKeymap builds the keymap from the config file at path, or at the
+// default location when path is "". There, a missing file, or no config
+// directory at all, means the default keys; a missing file named with
+// --config is an error, so a typo in its path can't go unnoticed. Its errors
+// start "config <path>: ", and an invalid keymap's list its problems, one
+// per line, indented.
+func loadKeymap(path string) (*keymap.Map, error) {
+	named := path != ""
+	if !named {
+		var err error
+		if path, err = defaultConfigPath(); err != nil {
+			return tui.NewKeymap(nil)
+		}
+	}
+	cfg, err := config.Load(path)
+	if err != nil && (named || !errors.Is(err, fs.ErrNotExist)) {
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
+	keys, err := tui.NewKeymap(cfg.Shortcuts)
+	if err != nil {
+		problems := strings.ReplaceAll(err.Error(), "\n", "\n  ")
+		return nil, fmt.Errorf("config %s: invalid shortcuts:\n  %s", path, problems)
+	}
+	return keys, nil
 }
