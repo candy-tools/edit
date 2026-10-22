@@ -10,11 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/candy-tools/edit/app/tui"
 	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // stubTUI swaps the TUI launcher for fn for the duration of the test.
-func stubTUI(t *testing.T, fn func(root string, keys *keymap.Map) error) {
+func stubTUI(t *testing.T, fn func(root string, keys *keymap.Map, theme tui.Theme) error) {
 	t.Helper()
 	orig := runTUI
 	runTUI = fn
@@ -57,19 +60,34 @@ func writeFile(t *testing.T, path, text string) {
 	}
 }
 
-// execute runs edit with args, the TUI stubbed, and returns the keymap the
-// TUI started with, nil if it didn't start, and the command's error.
-func execute(t *testing.T, args ...string) (*keymap.Map, error) {
+// started is what the TUI started with.
+type started struct {
+	keys  *keymap.Map
+	theme tui.Theme
+}
+
+// execute runs edit with args, the TUI stubbed, and returns what the TUI
+// started with, nil if it didn't start, and the command's error.
+func execute(t *testing.T, args ...string) (*started, error) {
 	t.Helper()
-	var keys *keymap.Map
-	stubTUI(t, func(_ string, k *keymap.Map) error {
-		keys = k
+	var s *started
+	stubTUI(t, func(_ string, keys *keymap.Map, theme tui.Theme) error {
+		s = &started{keys: keys, theme: theme}
 		return nil
 	})
 	c := newRootCommand()
 	c.SetArgs(args)
 	err := c.Execute()
-	return keys, err
+	return s, err
+}
+
+// terminal makes lipgloss see a terminal of color profile p until the test
+// ends: a test's own output has no colors.
+func terminal(t *testing.T, p termenv.Profile) {
+	t.Helper()
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(p)
+	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
 }
 
 // sidebarDown is the action the config tests rebind.
@@ -95,7 +113,7 @@ func TestRootMeta(t *testing.T) {
 func TestRootOpensWorkingDir(t *testing.T) {
 	noUserConfig(t)
 	var got string
-	stubTUI(t, func(root string, _ *keymap.Map) error {
+	stubTUI(t, func(root string, _ *keymap.Map, _ tui.Theme) error {
 		got = root
 		return nil
 	})
@@ -116,7 +134,7 @@ func TestRootOpensWorkingDir(t *testing.T) {
 func TestRootReturnsTUIError(t *testing.T) {
 	noUserConfig(t)
 	boom := errors.New("boom")
-	stubTUI(t, func(string, *keymap.Map) error { return boom })
+	stubTUI(t, func(string, *keymap.Map, tui.Theme) error { return boom })
 	c := newRootCommand()
 	c.SetArgs([]string{})
 	if err := c.Execute(); !errors.Is(err, boom) {
@@ -124,36 +142,62 @@ func TestRootReturnsTUIError(t *testing.T) {
 	}
 }
 
-func TestRootWithoutAConfigFileUsesTheDefaultKeys(t *testing.T) {
+func TestRootWithoutAConfigFileUsesTheDefaults(t *testing.T) {
+	terminal(t, termenv.ANSI256)
 	noUserConfig(t)
-	keys, err := execute(t)
+	s, err := execute(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := keys.Keys(sidebarDown); !slices.Equal(got, []string{"down"}) {
+	if got := s.keys.Keys(sidebarDown); !slices.Equal(got, []string{"down"}) {
 		t.Errorf("sidebar.down: keys %q, want the default down", got)
+	}
+	if got := s.theme.Name(); got != "candy" {
+		t.Errorf("theme %q, want the default candy", got)
 	}
 }
 
-func TestRootWithoutAConfigDirectoryUsesTheDefaultKeys(t *testing.T) {
+func TestRootWithoutAConfigDirectoryUsesTheDefaults(t *testing.T) {
+	terminal(t, termenv.ANSI256)
 	noConfigDir(t)
-	keys, err := execute(t)
+	s, err := execute(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := keys.Keys(sidebarDown); !slices.Equal(got, []string{"down"}) {
+	if got := s.keys.Keys(sidebarDown); !slices.Equal(got, []string{"down"}) {
 		t.Errorf("sidebar.down: keys %q, want the default down", got)
+	}
+	if got := s.theme.Name(); got != "candy" {
+		t.Errorf("theme %q, want the default candy", got)
 	}
 }
 
 func TestRootReadsTheConfigFile(t *testing.T) {
-	writeFile(t, noUserConfig(t), "shortcuts:\n  sidebar:\n    down: [j, down]\n")
-	keys, err := execute(t)
+	terminal(t, termenv.ANSI256)
+	writeFile(t, noUserConfig(t), "shortcuts:\n  sidebar:\n    down: [j, down]\ntheme: dracula\n")
+	s, err := execute(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := keys.Keys(sidebarDown); !slices.Equal(got, []string{"j", "down"}) {
+	if got := s.keys.Keys(sidebarDown); !slices.Equal(got, []string{"j", "down"}) {
 		t.Errorf("sidebar.down: keys %q, want j, down from the config file", got)
+	}
+	if got := s.theme.Name(); got != "dracula" {
+		t.Errorf("theme %q, want dracula from the config file", got)
+	}
+}
+
+// Review focus: on a terminal without colors, or with NO_COLOR set, edit
+// draws no colors whatever the config file says.
+func TestRootWithoutColorsUsesTheThemeNone(t *testing.T) {
+	terminal(t, termenv.Ascii)
+	writeFile(t, noUserConfig(t), "theme: dracula\n")
+	s, err := execute(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.theme.Name(); got != "none" {
+		t.Errorf("theme %q, want none on a terminal without colors", got)
 	}
 }
 
@@ -161,11 +205,11 @@ func TestRootReadsTheFileTheConfigFlagNames(t *testing.T) {
 	writeFile(t, noUserConfig(t), "shortcuts:\n  sidebar:\n    down: [k]\n")
 	path := filepath.Join(t.TempDir(), "edit.yaml")
 	writeFile(t, path, "shortcuts:\n  sidebar:\n    down: [j]\n")
-	keys, err := execute(t, "--config", path)
+	s, err := execute(t, "--config", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := keys.Keys(sidebarDown); !slices.Equal(got, []string{"j"}) {
+	if got := s.keys.Keys(sidebarDown); !slices.Equal(got, []string{"j"}) {
 		t.Errorf("sidebar.down: keys %q, want j from the file --config names", got)
 	}
 }
@@ -183,6 +227,9 @@ func TestRootStopsOnAConfigMistake(t *testing.T) {
 			"config %s: invalid shortcuts:\n  global.quit: needs at least one key\n  sidebar.donw: unknown action"},
 		{"a mistake in the file at the default path", "shortcuts: [j]\n", false,
 			"config %s: shortcuts: want a mapping of scopes"},
+		{"an unknown theme", "theme: monokai\n", false,
+			`config %s: unknown theme "monokai": want candy, candy-light, dracula, gruvbox or none`},
+		{"a theme that is no name", "theme: [dracula]\n", true, "config %s: theme: want a theme name"},
 	} {
 		path := noUserConfig(t)
 		var args []string
@@ -193,11 +240,11 @@ func TestRootStopsOnAConfigMistake(t *testing.T) {
 		if c.text != "" {
 			writeFile(t, path, c.text)
 		}
-		keys, err := execute(t, args...)
+		s, err := execute(t, args...)
 		if want := fmt.Sprintf(c.want, path); err == nil || err.Error() != want {
 			t.Errorf("%s: Execute() = %v, want\n%s", c.name, err, want)
 		}
-		if keys != nil {
+		if s != nil {
 			t.Errorf("%s: the TUI started", c.name)
 		}
 	}
@@ -210,11 +257,11 @@ func TestRootStopsOnAnUnreadableConfigFile(t *testing.T) {
 	if err := os.MkdirAll(path, 0o700); err != nil { // a folder where the file should be
 		t.Fatal(err)
 	}
-	keys, err := execute(t)
+	s, err := execute(t)
 	if want := "config " + path + ": is a directory"; err == nil || err.Error() != want {
 		t.Errorf("Execute() = %v, want %q", err, want)
 	}
-	if keys != nil {
+	if s != nil {
 		t.Error("the TUI started")
 	}
 }
@@ -222,11 +269,11 @@ func TestRootStopsOnAnUnreadableConfigFile(t *testing.T) {
 func TestRootStopsOnAConfigSyntaxError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "edit.yaml")
 	writeFile(t, path, "shortcuts:\n  sidebar: [down\n")
-	keys, err := execute(t, "--config", path)
+	s, err := execute(t, "--config", path)
 	if want := "config " + path + ": yaml: line "; err == nil || !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("Execute() = %v, want an error starting %q", err, want)
 	}
-	if keys != nil {
+	if s != nil {
 		t.Error("the TUI started")
 	}
 }
@@ -265,11 +312,11 @@ func TestNoUserConfigHoldsWhateverTheEnvironmentSays(t *testing.T) {
 	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "AppData"} {
 		t.Setenv(v, elsewhere)
 	}
-	keys, err := execute(t)
+	s, err := execute(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := keys.Keys(sidebarDown); !slices.Equal(got, []string{"j"}) {
+	if got := s.keys.Keys(sidebarDown); !slices.Equal(got, []string{"j"}) {
 		t.Errorf("sidebar.down: keys %q, want j from %s", got, path)
 	}
 	if got := configUsage(); !strings.Contains(got, "(default "+path+")") {

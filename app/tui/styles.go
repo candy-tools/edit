@@ -33,13 +33,18 @@ var (
 	selectedRowStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	plainStyle       = lipgloss.NewStyle()
 
-	// lineNumberStyle draws the line numbers in the editor pane's gutter.
+	// lineNumberStyle draws the line numbers in the editor pane's gutter,
+	// and cursorLineStyle the cursor's, in the text's colour rather than
+	// dim.
 	lineNumberStyle = lipgloss.NewStyle().Foreground(colDim)
+	cursorLineStyle = lipgloss.NewStyle()
 
 	helpKeyStyle   = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	helpTextStyle  = lipgloss.NewStyle().Foreground(colDim)
 	headerAppStyle = lipgloss.NewStyle().Foreground(colTitle).Bold(true)
 	headerHintSty  = lipgloss.NewStyle().Foreground(colDim)
+	// warnStyle draws the header's warning that a tab can't be saved.
+	warnStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 )
 
 // borderStyle colours a pane's border: accent when the pane has focus, dim

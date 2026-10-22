@@ -2,12 +2,10 @@ package tui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/candy-tools/edit/libs/textedit"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -18,91 +16,84 @@ const (
 	emptyHint = "Select a file and press enter to open it"
 )
 
-// editorBody draws the editor pane's body, width cells wide: the text window
-// of doc, the active tab's document, with line numbers; or doc's note; or,
-// when no tab is open (doc is nil), a hint on how to open a file.
-func editorBody(doc *document, width int) string {
+// cursorStyle draws the cursor's cell in reverse video. It is a plain SGR
+// sequence rather than a lipgloss style: lipgloss drops its styles on a
+// terminal without colours or with NO_COLOR set, and the cursor must show
+// there too.
+var cursorStyle = ansi.NewStyle(ansi.AttrReverse)
+
+// editorBody draws the editor pane's body: the text window of doc, the
+// active tab's document, with line numbers, its text colored by its syntax
+// in theme and, while the editor has focus, the cursor, in reverse video
+// without the colors; or doc's note; or, when no tab is open (doc is nil),
+// a hint on how to open a file. The cursor's line number is drawn brighter
+// than the others, so the line stays easy to find while the sidebar has
+// focus. The window already has the body's size: the model fits it on
+// every change.
+func editorBody(doc *document, focused bool, theme Theme) string {
 	switch {
 	case doc == nil:
 		return " " + helpTextStyle.Render(emptyHint)
 	case doc.text == nil:
 		return " " + helpTextStyle.Render(doc.note)
 	}
-	lines, first := doc.text.Window()
-	digits := len(strconv.Itoa(doc.text.Len()))
-	room := width - digits - 2 // the gutter: a space, the number, a space
+	digits := gutterWidth(doc.text.Len()) - 2
+	cursorLine, _ := doc.text.Cursor()
+	lines := doc.text.Window(doc.classifier(theme))
 	out := make([]string, len(lines))
 	for i, l := range lines {
-		gutter := fmt.Sprintf(" %*d ", digits, first+i+1)
-		out[i] = lineNumberStyle.Render(gutter) + textLine(l, room)
+		number := lineNumberStyle
+		if l.Number == cursorLine {
+			number = cursorLineStyle
+		}
+		var b strings.Builder
+		b.WriteString(number.Render(fmt.Sprintf(" %*d ", digits, l.Number+1)))
+		for j, r := range l.Runs {
+			if j == l.Cursor && focused {
+				b.WriteString(cursorStyle.Styled(r.Text))
+			} else {
+				b.WriteString(theme.draw(r.Class, r.Text))
+			}
+		}
+		out[i] = b.String()
 	}
 	return strings.Join(out, "\n")
 }
 
+// editorEdits are what the editor's actions do to a text: move its cursor,
+// or edit it.
+var editorEdits = map[keymap.ID]func(*textedit.Buffer){
+	editorLeft:        (*textedit.Buffer).Left,
+	editorRight:       (*textedit.Buffer).Right,
+	editorUp:          (*textedit.Buffer).Up,
+	editorDown:        (*textedit.Buffer).Down,
+	editorLineStart:   (*textedit.Buffer).LineStart,
+	editorLineEnd:     (*textedit.Buffer).LineEnd,
+	editorPageUp:      (*textedit.Buffer).PageUp,
+	editorPageDown:    (*textedit.Buffer).PageDown,
+	editorTop:         (*textedit.Buffer).Top,
+	editorBottom:      (*textedit.Buffer).Bottom,
+	editorNewline:     func(b *textedit.Buffer) { b.Insert("\n") },
+	editorInsertTab:   func(b *textedit.Buffer) { b.Insert("\t") },
+	editorDeleteLeft:  (*textedit.Buffer).DeleteLeft,
+	editorDeleteRight: (*textedit.Buffer).DeleteRight,
+	editorDeleteLine:  (*textedit.Buffer).DeleteLine,
+}
+
 // editorAction applies an action of the editor to doc, the active tab's
-// document: up, down, page-up, page-down, top and bottom scroll its text.
-// Other actions do nothing, and so does every action with no tab open (doc
-// is nil) or on a document showing a note.
+// document, as editorEdits says. Other actions do nothing, and so does every
+// action with no tab open (doc is nil) or on a document showing a note.
 func editorAction(doc *document, id keymap.ID) {
-	if doc == nil || doc.text == nil {
-		return
-	}
-	switch id {
-	case editorUp:
-		doc.text.Up()
-	case editorDown:
-		doc.text.Down()
-	case editorPageUp:
-		doc.text.PageUp()
-	case editorPageDown:
-		doc.text.PageDown()
-	case editorTop:
-		doc.text.Top()
-	case editorBottom:
-		doc.text.Bottom()
+	if edit, ok := editorEdits[id]; ok && doc != nil && doc.text != nil {
+		edit(doc.text)
 	}
 }
 
-// textLine draws a line of a file's text into at most width cells. A tab
-// becomes spaces up to the next multiple of tabWidth; each run of invalid
-// UTF-8 bytes and each other control character becomes "?", as in
-// displayName; any other character is drawn as it is. It stops before the
-// first character that would not fit, so however long the line, only what
-// fits is processed.
-func textLine(line string, width int) string {
-	var b strings.Builder
-	col := 0 // cells drawn so far
-	for i := 0; i < len(line); {
-		text, w, size := textCell(line[i:], col)
-		if col+w > width {
-			break
-		}
-		b.WriteString(text)
-		col += w
-		i += size
+// typeText types text at the cursor of doc, the active tab's document: what
+// a key types, or pasted text. With no tab open (doc is nil), or on a
+// document showing a note, it does nothing.
+func typeText(doc *document, text string) {
+	if doc != nil && doc.text != nil {
+		doc.text.Insert(text)
 	}
-	return b.String()
-}
-
-// textCell is how textLine draws the character at the start of s, col cells
-// into the line: the text to draw, how many cells it takes, and how many
-// bytes of s it stands for.
-func textCell(s string, col int) (text string, width, size int) {
-	r, size := utf8.DecodeRuneInString(s)
-	switch {
-	case r == utf8.RuneError && size == 1:
-		for size < len(s) { // the rest of the run of invalid bytes
-			if r, n := utf8.DecodeRuneInString(s[size:]); r != utf8.RuneError || n != 1 {
-				break
-			}
-			size++
-		}
-		return "?", 1, size
-	case r == '\t':
-		n := tabWidth - col%tabWidth
-		return strings.Repeat(" ", n), n, size
-	case unicode.IsControl(r):
-		return "?", 1, size
-	}
-	return s[:size], ansi.StringWidth(s[:size]), size
 }

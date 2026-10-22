@@ -44,6 +44,10 @@ func (s *Set[K, V]) SetWidth(w int) {
 	s.fit()
 }
 
+// Remeasure measures the tabs again and moves the window to keep the active
+// tab in view: for when what the tabs show, and so their widths, changed.
+func (s *Set[K, V]) Remeasure() { s.fit() }
+
 // Open makes the tab with key active. If no open tab has that key, it first
 // calls value once and opens a tab holding the result at the right end;
 // value is not called when the tab is already open.

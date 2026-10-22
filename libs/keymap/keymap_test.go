@@ -355,3 +355,90 @@ func TestLabel(t *testing.T) {
 		}
 	}
 }
+
+// typingProblems returns the problems New reports for the small program
+// with o when the view is a scope where keys type text, one per line, or ""
+// when there are none.
+func typingProblems(o overrides) string {
+	if _, err := New(testActions(), o, "view"); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// cleanView is the overrides that leave the view without letters, binding
+// view.up to up and view.down to keys.
+func cleanView(keys ...string) overrides {
+	return overrides{"view": {"up": {"up"}, "down": keys}}
+}
+
+func TestKeysThatTypeTextInATypingScope(t *testing.T) {
+	if got, want := typingProblems(nil), "view.down: key \"j\" types text\nview.up: key \"k\" types text"; got != want {
+		t.Errorf("the view's default letters: problems =\n%s\nwant\n%s", got, want)
+	}
+	for _, c := range []struct {
+		name string
+		o    overrides
+		want string
+	}{
+		{"a letter", cleanView("j"), `view.down: key "j" types text`},
+		{"a capital", cleanView("J"), `view.down: key "J" types text`},
+		{"a letter with an accent", cleanView("ñ"), `view.down: key "ñ" types text`},
+		{"a digit", cleanView("1"), `view.down: key "1" types text`},
+		{"the space bar", cleanView(" ", "space"), `view.down: key "space" types text`},
+		{"a letter in the global scope", overrides{"view": cleanView("down")["view"], Global: {"next": {"x"}}},
+			`global.next: key "x" types text`},
+		{"alt and a letter", cleanView("alt+j"), ""},
+		{"alt and the space bar", cleanView("alt+space"), ""},
+		{"a control key", cleanView("ctrl+k"), ""},
+		{"named keys", cleanView("enter", "f5", "tab", "backspace"), ""},
+		{"a letter in another pane", overrides{"view": cleanView("down")["view"], "list": {"down": {"j"}}}, ""},
+		{"an unknown key is only unknown", cleanView("ctrl+uo"), `view.down: unknown key "ctrl+uo"`},
+		{"sorted with the other problems", overrides{"view": {"up": {"ctrl+uo"}, "down": {"j"}}, Global: {"quit": {}}},
+			"global.quit: needs at least one key\nview.down: key \"j\" types text\nview.up: unknown key \"ctrl+uo\""},
+	} {
+		if got := typingProblems(c.o); got != c.want {
+			t.Errorf("%s: problems =\n%s\nwant\n%s", c.name, got, c.want)
+		}
+	}
+}
+
+func TestWithoutATypingScopeGlobalLettersAreFine(t *testing.T) {
+	if got := problems(overrides{Global: {"next": {"x"}}}); got != "" {
+		t.Errorf("problems %q, want none", got)
+	}
+}
+
+func TestATypingScopeMustHaveActions(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("New should panic on a typing scope no action is in")
+		}
+	}()
+	_, _ = New(testActions(), cleanView("down"), "viwe")
+}
+
+func TestTyped(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		msg  tea.KeyMsg
+		want string // "" when msg types nothing
+	}{
+		{"a letter", typed("j"), "j"},
+		{"several letters", typed("jk"), "jk"},
+		{"pasted text", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a\r\nb"), Paste: true}, "a\r\nb"},
+		{"the space bar", press(tea.KeySpace), " "},
+		{"a typed space", typed(" "), " "},
+		{"alt and a letter", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j"), Alt: true}, ""},
+		{"alt and the space bar", tea.KeyMsg{Type: tea.KeySpace, Alt: true}, ""},
+		{"enter", press(tea.KeyEnter), ""},
+		{"tab", press(tea.KeyTab), ""},
+		{"a control key", press(tea.KeyCtrlK), ""},
+		{"no runes", tea.KeyMsg{Type: tea.KeyRunes}, ""},
+	} {
+		text, ok := Typed(c.msg)
+		if text != c.want || ok != (c.want != "") {
+			t.Errorf("%s: Typed = %q, %t; want %q", c.name, text, ok, c.want)
+		}
+	}
+}

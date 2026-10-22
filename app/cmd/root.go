@@ -13,6 +13,8 @@ import (
 	"github.com/candy-tools/edit/app/metainfo"
 	"github.com/candy-tools/edit/app/tui"
 	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +47,7 @@ func newRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(*cobra.Command, []string) error {
-			keys, err := loadKeymap(configPath)
+			keys, theme, err := loadSettings(configPath)
 			if err != nil {
 				return err
 			}
@@ -53,7 +55,7 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTUI(root, keys)
+			return runTUI(root, keys, theme)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", configUsage())
@@ -71,28 +73,47 @@ func configUsage() string {
 	return "read the settings from the config file at `path` (default " + where + ")"
 }
 
-// loadKeymap builds the keymap from the config file at path, or at the
-// default location when path is "". There, a missing file, or no config
-// directory at all, means the default keys; a missing file named with
+// loadSettings builds the keymap and the theme from the config file at path,
+// or at the default location when path is "". There, a missing file, or no
+// config directory at all, means the defaults; a missing file named with
 // --config is an error, so a typo in its path can't go unnoticed. Its errors
 // start "config <path>: ", and an invalid keymap's list its problems, one
-// per line, indented.
-func loadKeymap(path string) (*keymap.Map, error) {
-	named := path != ""
-	if !named {
-		var err error
-		if path, err = defaultConfigPath(); err != nil {
-			return tui.NewKeymap(nil)
-		}
-	}
-	cfg, err := config.Load(path)
-	if err != nil && (named || !errors.Is(err, fs.ErrNotExist)) {
-		return nil, fmt.Errorf("config %s: %w", path, err)
+// per line, indented. A theme that doesn't exist is an error on any
+// terminal, but on one without colors, as NO_COLOR makes any terminal, the
+// theme is none.
+func loadSettings(path string) (*keymap.Map, tui.Theme, error) {
+	cfg, path, err := loadConfig(path)
+	if err != nil {
+		return nil, tui.Theme{}, err
 	}
 	keys, err := tui.NewKeymap(cfg.Shortcuts)
 	if err != nil {
 		problems := strings.ReplaceAll(err.Error(), "\n", "\n  ")
-		return nil, fmt.Errorf("config %s: invalid shortcuts:\n  %s", path, problems)
+		return nil, tui.Theme{}, fmt.Errorf("config %s: invalid shortcuts:\n  %s", path, problems)
 	}
-	return keys, nil
+	theme, err := tui.NewTheme(cfg.Theme)
+	if err != nil {
+		return nil, tui.Theme{}, fmt.Errorf("config %s: %w", path, err)
+	}
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		theme, err = tui.NewTheme("none")
+	}
+	return keys, theme, err
+}
+
+// loadConfig reads the config file at path, or at the default location when
+// path is "", and returns it and its path, as loadSettings describes.
+func loadConfig(path string) (config.Config, string, error) {
+	named := path != ""
+	if !named {
+		var err error
+		if path, err = defaultConfigPath(); err != nil {
+			return config.Config{}, "", nil
+		}
+	}
+	cfg, err := config.Load(path)
+	if err != nil && (named || !errors.Is(err, fs.ErrNotExist)) {
+		return config.Config{}, path, fmt.Errorf("config %s: %w", path, err)
+	}
+	return cfg, path, nil
 }

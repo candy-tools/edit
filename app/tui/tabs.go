@@ -13,7 +13,8 @@ type openTab = tabset.Tab[string, *document]
 
 // tabTitles returns the titles of tabs, left to right: each file's name or,
 // when two or more of the tabs share that name, its path relative to the
-// workspace, made safe to draw by displayName.
+// workspace, made safe to draw by displayName, after a "⚠ " while the tab's
+// last write failed.
 func tabTitles(tabs []openTab) []string {
 	names := make(map[string]int, len(tabs))
 	for _, t := range tabs {
@@ -26,6 +27,9 @@ func tabTitles(tabs []openTab) []string {
 			title = t.Key
 		}
 		titles[i] = displayName(title)
+		if t.Value.saveErr != nil {
+			titles[i] = "⚠ " + titles[i]
+		}
 	}
 	return titles
 }

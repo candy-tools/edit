@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
@@ -24,6 +25,18 @@ func TestTabTitles(t *testing.T) {
 	want := []string{"README.md", "docs/README.md", "main.go", "a?b.txt", "bad?.txt"}
 	if got := tabTitles(tabs); !slices.Equal(got, want) {
 		t.Errorf("titles = %q, want %q", got, want)
+	}
+}
+
+func TestTabTitlesMarkAFailedWrite(t *testing.T) {
+	set := openPaths(100, "go.mod", "main.go")
+	tabs, _ := set.Tabs()
+	tabs[0].Value.saveErr = errors.New("permission denied")
+	if got, want := tabTitles(tabs), []string{"⚠ go.mod", "main.go"}; !slices.Equal(got, want) {
+		t.Errorf("titles = %q, want %q", got, want)
+	}
+	if got := measureTabs(tabs); got[0] != len("go.mod")+5 {
+		t.Errorf("widths = %v: the mark takes 2 more cells", got)
 	}
 }
 

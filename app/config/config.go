@@ -20,6 +20,9 @@ type Config struct {
 	// the file says; which scopes, actions and keys exist is for the keymap
 	// to check.
 	Shortcuts map[string]map[string][]string
+	// Theme names the color theme, "" for the default. Which themes exist
+	// is for the editor to check.
+	Theme string
 }
 
 // DefaultPath is where edit looks for its config file:
@@ -34,10 +37,10 @@ func DefaultPath() (string, error) {
 }
 
 // Load reads the config file at path: one YAML document, a mapping of
-// settings, of which only shortcuts exists, mapping scopes to mappings of
-// action names to a key or a list of keys. An empty file, and a null in
-// place of a mapping, mean no settings there. A YAML alias stands for the
-// value its anchor marks.
+// settings, which are shortcuts, mapping scopes to mappings of action names
+// to a key or a list of keys, and theme, a theme's name. An empty file, and
+// a null in place of a mapping, mean no settings there. A YAML alias stands
+// for the value its anchor marks.
 //
 // Its errors don't name the file, since the caller knows it: a file that
 // can't be read gives just the cause, such as "permission denied", and a
@@ -91,12 +94,20 @@ func document(data []byte) (*yaml.Node, error) {
 func settings(n *yaml.Node) (Config, error) {
 	var cfg Config
 	err := mapping(n, "", "settings", func(name, at string, value *yaml.Node) error {
-		if name != "shortcuts" {
-			return fmt.Errorf("unknown setting %q", name)
+		switch name {
+		case "shortcuts":
+			var err error
+			cfg.Shortcuts, err = shortcuts(value, at)
+			return err
+		case "theme":
+			v := resolve(value)
+			if !isKey(v) {
+				return problem(at, "want a theme name")
+			}
+			cfg.Theme = v.Value
+			return nil
 		}
-		var err error
-		cfg.Shortcuts, err = shortcuts(value, at)
-		return err
+		return fmt.Errorf("unknown setting %q", name)
 	})
 	if err != nil {
 		return Config{}, err

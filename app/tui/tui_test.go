@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -15,7 +17,7 @@ import (
 )
 
 func TestNewModelStartState(t *testing.T) {
-	m := newModel("/work/project", testFS, testKeys)
+	m := newModel("/work/project", testFS, noWrites, testKeys, noColors)
 	if m.focus != paneSidebar {
 		t.Errorf("start focus = %v, want the sidebar", m.focus)
 	}
@@ -27,14 +29,31 @@ func TestNewModelStartState(t *testing.T) {
 	}
 }
 
-func TestTabTogglesFocus(t *testing.T) {
-	m := press(newTestModel(), "tab")
+func TestShiftTabTogglesFocus(t *testing.T) {
+	m := press(newTestModel(), "shift+tab")
 	if m.focus != paneEditor {
-		t.Fatalf("after tab focus = %v, want the editor", m.focus)
+		t.Fatalf("after shift+tab focus = %v, want the editor", m.focus)
 	}
-	m = press(m, "tab")
+	m = press(m, "shift+tab")
 	if m.focus != paneSidebar {
-		t.Fatalf("after a second tab focus = %v, want the sidebar", m.focus)
+		t.Fatalf("after a second shift+tab focus = %v, want the sidebar", m.focus)
+	}
+}
+
+// tab types a tab in the editor, so it no longer switches focus, and in the
+// sidebar it does nothing.
+func TestTabTypesATabInTheEditor(t *testing.T) {
+	m := newTestModel()
+	tree := sidebarRows(m)
+	if m = press(m, "tab"); m.focus != paneSidebar || !slices.Equal(sidebarRows(m), tree) {
+		t.Errorf("tab in the sidebar: focus %v, tree %q; want nothing to change", m.focus, sidebarRows(m))
+	}
+	m = press(m, "down", "enter", "tab") // go.mod
+	if got, want := m.activeDocument().text.String(), "\tmodule example.com/project\n\ngo 1.26\n"; got != want {
+		t.Errorf("tab in the editor: text %q, want %q", got, want)
+	}
+	if m.focus != paneEditor {
+		t.Errorf("tab in the editor moved focus to %v", m.focus)
 	}
 }
 
@@ -50,10 +69,11 @@ func TestQuitKeys(t *testing.T) {
 	}
 }
 
-// By default, plain letters must not trigger anything: once the editor takes
-// input, they are text, and the file tree is driven by the arrows, not
-// vim-style letters. They are commands only when the config binds them.
-func TestLettersAreNotCommands(t *testing.T) {
+// In the editor letters are text: they type at the cursor. In the sidebar
+// they do nothing by default, since the file tree is driven by the arrows,
+// not vim-style letters; they are commands there only when the config binds
+// them.
+func TestLettersTypeOnlyInTheEditor(t *testing.T) {
 	m := newTestModel()
 	tree := ansi.Strip(m.sidebarBody())
 	nm, cmd := m.Update(keyMsg("q"))
@@ -67,12 +87,65 @@ func TestLettersAreNotCommands(t *testing.T) {
 	if got := ansi.Strip(m.sidebarBody()); got != tree {
 		t.Errorf("letters must not drive the tree, got\n%s\nwant\n%s", got, tree)
 	}
-	m = openBig(30)
-	text := editorText(m)
-	m = press(m, "j", "k", "f", "b", "G", " ")
-	if got := editorText(m); !slices.Equal(got, text) {
-		t.Errorf("letters must not scroll an open file, got\n%s\nwant\n%s",
-			strings.Join(got, "\n"), strings.Join(text, "\n"))
+	press(m, "shift+tab", "x") // the editor with no tab open: nothing to type into
+	m = press(openBig(30), "j", "k", "f", "b", "G", " ")
+	if got, want := editorText(m)[0], "   1 jkfbG line 1"; got != want {
+		t.Errorf("after typing, the first row = %q, want %q", got, want)
+	}
+	if line, offset := cursor(m); line != 0 || offset != 6 {
+		t.Errorf("cursor at %d:%d, want after the typed letters, 0:6", line, offset)
+	}
+}
+
+// Review focus: a key held down, or keys typed fast, reach the model as one
+// message of several runes. Every one of them is typed, in order.
+func TestABurstOfTypedKeysTypesEachKey(t *testing.T) {
+	m := press(openBig(30), "abc") // one message
+	if got, want := editorText(m)[0], "   1 abcline 1"; got != want {
+		t.Errorf("after typing abc at once, the first row = %q, want %q", got, want)
+	}
+}
+
+func TestTheEditingKeys(t *testing.T) {
+	m := press(newTestModel(), "down", "down", "enter") // README.md: "# project\n"
+	for _, step := range []struct {
+		key, want string
+	}{
+		{"end", "# project\n"},
+		{"enter", "# project\n\n"},
+		{"x", "# project\nx\n"},
+		{"backspace", "# project\n\n"},
+		{"ctrl+h", "# project\n"}, // some terminals send ctrl+h for backspace
+		{"home", "# project\n"},
+		{"delete", " project\n"},
+		{"space", "  project\n"},
+		{"ctrl+k", "\n"},
+	} {
+		m = press(m, step.key)
+		if got := m.activeDocument().text.String(); got != step.want {
+			t.Errorf("after %s the text is %q, want %q", step.key, got, step.want)
+		}
+	}
+}
+
+func TestPastedTextGoesInAtTheCursor(t *testing.T) {
+	m := paste(openBig(30), "a\r\nb\rc\nd")
+	if got, want := editorText(m)[:4], []string{"   1 a", "   2 b", "   3 c", "   4 dline 1"}; !slices.Equal(got, want) {
+		t.Errorf("after pasting, the rows = %q, want %q", got, want)
+	}
+	if line, offset := cursor(m); line != 3 || offset != 1 {
+		t.Errorf("cursor at %d:%d, want after the pasted text, 3:1", line, offset)
+	}
+}
+
+// Review focus: narrowing the terminal while the cursor is far to the right
+// keeps the cursor in view.
+func TestAResizeKeepsTheCursorInView(t *testing.T) {
+	fsys := fstest.MapFS{"long.txt": {Data: []byte(strings.Repeat("abcdefghij", 10) + "END\n")}}
+	m := press(send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 200, Height: 10}), "enter", "end")
+	m = send(m, tea.WindowSizeMsg{Width: 60, Height: 10})
+	if got := editorText(m)[0]; !strings.HasSuffix(got, "END") {
+		t.Errorf("after narrowing, the first row = %q, want the line's end in view", got)
 	}
 }
 
@@ -89,7 +162,7 @@ func TestViewFillsTerminal(t *testing.T) {
 }
 
 func TestViewDefaultsTo80x24(t *testing.T) {
-	lines := strings.Split(newModel("/work/project", testFS, testKeys).View(), "\n")
+	lines := strings.Split(newModel("/work/project", testFS, noWrites, testKeys, noColors).View(), "\n")
 	if len(lines) != 24 || lipgloss.Width(lines[1]) != 80 {
 		t.Errorf("before a WindowSizeMsg the view should be 80x24, got %d lines of %d cells",
 			len(lines), lipgloss.Width(lines[1]))
@@ -105,7 +178,7 @@ func TestViewChrome(t *testing.T) {
 		t.Errorf("top border %q should carry the sidebar title", lines[1])
 	}
 	footer := lines[len(lines)-1]
-	for _, want := range []string{"tab: Focus", "ctrl+q: Quit"} {
+	for _, want := range []string{"shift+tab: Focus", "ctrl+q: Quit"} {
 		if !strings.Contains(footer, want) {
 			t.Errorf("footer %q should contain %q", footer, want)
 		}
@@ -229,7 +302,7 @@ func TestViewDrawsTheTreeInTheFilesBox(t *testing.T) {
 }
 
 func TestSidebarShowsAWorkspaceItCannotRead(t *testing.T) {
-	if got, want := ansi.Strip(newModel("/work/project", deniedFS{}, testKeys).sidebarBody()), "❯ ⚠ permission denied"; got != want {
+	if got, want := ansi.Strip(newModel("/work/project", deniedFS{}, noWrites, testKeys, noColors).sidebarBody()), "❯ ⚠ permission denied"; got != want {
 		t.Errorf("sidebar = %q, want %q", got, want)
 	}
 }
@@ -255,7 +328,7 @@ func TestSidebarKeysDriveTheTree(t *testing.T) {
 }
 
 func TestTreeKeysNeedSidebarFocus(t *testing.T) {
-	m := press(newTestModel(), "tab") // focus the editor
+	m := press(newTestModel(), "shift+tab") // focus the editor
 	tree := ansi.Strip(m.sidebarBody())
 	m = press(m, "right", "down", "end", "enter", "left")
 	if got := ansi.Strip(m.sidebarBody()); got != tree {
@@ -277,10 +350,10 @@ func TestFooterHintsFollowFocusAndOpenTabs(t *testing.T) {
 		m    model
 		want string
 	}{
-		{"sidebar focused", newTestModel(), " ↑↓: Move  ←→: Fold  enter: Open  tab: Focus  ctrl+q: Quit"},
-		{"editor focused, no tab open", press(newTestModel(), "tab"), " tab: Focus  ctrl+q: Quit"},
+		{"sidebar focused", newTestModel(), " ↑↓: Move  ←→: Fold  enter: Open  shift+tab: Focus  ctrl+q: Quit"},
+		{"editor focused, no tab open", press(newTestModel(), "shift+tab"), " shift+tab: Focus  ctrl+q: Quit"},
 		{"editor focused, a tab open", press(newTestModel(), "down", "enter"),
-			" ↑↓: Scroll  ctrl+pgup/pgdown: Tabs  ctrl+w: Close  tab: Focus  ctrl+q: Quit"},
+			" ctrl+pgup/pgdown: Tabs  ctrl+w: Close  shift+tab: Focus  ctrl+q: Quit"},
 	} {
 		if got := footerText(c.m); got != c.want {
 			t.Errorf("%s: footer = %q, want %q", c.name, got, c.want)
@@ -289,7 +362,7 @@ func TestFooterHintsFollowFocusAndOpenTabs(t *testing.T) {
 }
 
 func TestSidebarScrollsWithinTheBox(t *testing.T) {
-	m := send(newModel("/w", manyFiles(20), testKeys), tea.WindowSizeMsg{Width: 100, Height: 10})
+	m := send(newModel("/w", manyFiles(20), noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 10})
 	if rows := sidebarRows(m); len(rows) != 6 || rows[0] != "❯   f00" {
 		t.Errorf("a 10-row terminal leaves 6 tree rows starting at f00, got %q", rows)
 	}
@@ -300,7 +373,7 @@ func TestSidebarScrollsWithinTheBox(t *testing.T) {
 }
 
 func TestSidebarUsesTheDefaultSizeBeforeTheFirstResize(t *testing.T) {
-	if n := len(sidebarRows(newModel("/w", manyFiles(30), testKeys))); n != 20 {
+	if n := len(sidebarRows(newModel("/w", manyFiles(30), noWrites, testKeys, noColors))); n != 20 {
 		t.Errorf("before a WindowSizeMsg the tree should fill the 80x24 sidebar's 20 rows, got %d", n)
 	}
 }
@@ -311,7 +384,7 @@ func TestSidebarUsesTheDefaultSizeBeforeTheFirstResize(t *testing.T) {
 func TestLongNamesAndDeepFoldersKeepTheLayout(t *testing.T) {
 	deep := "a/b/c/d/" + strings.Repeat("long-name-", 8)
 	fsys := fstest.MapFS{"日本語日本語日本語日本語.txt": {}, deep: {}}
-	m := send(newModel("/w", fsys, testKeys), tea.WindowSizeMsg{Width: 63, Height: 12})
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 63, Height: 12})
 	// → alternately opens a folder and steps into it, down to the deep file.
 	m = press(m, "right", "right", "right", "right", "right", "right", "right", "right")
 	if row, _ := m.files.Selected(); row.Depth != 4 || row.Node.dir {
@@ -342,7 +415,7 @@ func TestTinyTerminalShowsOneTreeRow(t *testing.T) {
 // row per entry and the box aligned.
 func TestUnsafeNamesKeepOneRowPerEntry(t *testing.T) {
 	fsys := fstest.MapFS{"two\nlines": {}, "\x1b[2Jclear": {}}
-	m := send(newModel("/w", fsys, testKeys), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
 	if got, want := ansi.Strip(m.sidebarBody()), "❯   ?[2Jclear\n    two?lines"; got != want {
 		t.Errorf("sidebar = %q, want %q", got, want)
 	}
@@ -360,7 +433,7 @@ var bigFS = fstest.MapFS{"big.txt": {Data: []byte(numberedLines(100))}}
 // openBig returns a model on bigFS, 100 columns wide and h rows tall, with
 // big.txt open and the editor focused.
 func openBig(h int) model {
-	return press(send(newModel("/w", bigFS, testKeys), tea.WindowSizeMsg{Width: 100, Height: h}), "enter")
+	return press(send(newModel("/w", bigFS, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: h}), "enter")
 }
 
 // editorText is the editor pane's body as m's view draws it, one string per
@@ -387,7 +460,7 @@ func activeKey(m model) string {
 // app/main.go, go.mod, then README.md, which is active, with the editor
 // focused.
 func threeTabs() model {
-	return press(newTestModel(), "right", "down", "enter", "tab", "down", "enter", "tab", "down", "enter")
+	return press(newTestModel(), "right", "down", "enter", "shift+tab", "down", "enter", "shift+tab", "down", "enter")
 }
 
 func TestEnterOpensAFileInATab(t *testing.T) {
@@ -406,7 +479,7 @@ func TestEnterOpensAFileInATab(t *testing.T) {
 // The flow this feature was asked for: opening a second file leaves the first
 // one open in its own tab.
 func TestOpeningASecondFileKeepsTheFirstOpen(t *testing.T) {
-	m := press(newTestModel(), "down", "enter", "tab", "down", "enter") // go.mod, then README.md
+	m := press(newTestModel(), "down", "enter", "shift+tab", "down", "enter") // go.mod, then README.md
 	tabs, active := m.tabs.Tabs()
 	if len(tabs) != 2 || tabs[0].Key != "go.mod" || tabs[1].Key != "README.md" || active != 1 {
 		t.Fatalf("tabs = %+v (active %d), want go.mod then README.md, README.md active", tabs, active)
@@ -432,8 +505,8 @@ func (c countingFS) Open(name string) (fs.File, error) {
 
 func TestEnterOnAnOpenFileSwitchesToItsTab(t *testing.T) {
 	fsys := countingFS{MapFS: testFS, opens: map[string]int{}}
-	m := send(newModel("/work/project", fsys, testKeys), tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = press(m, "down", "enter", "tab", "down", "enter", "tab", "up", "enter") // go.mod, README.md, go.mod
+	m := send(newModel("/work/project", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "down", "enter", "shift+tab", "down", "enter", "shift+tab", "up", "enter") // go.mod, README.md, go.mod
 	if tabs, active := m.tabs.Tabs(); len(tabs) != 2 || active != 0 {
 		t.Errorf("tabs = %+v (active %d), want the two tabs with go.mod active", tabs, active)
 	}
@@ -442,6 +515,24 @@ func TestEnterOnAnOpenFileSwitchesToItsTab(t *testing.T) {
 	}
 	if m.focus != paneEditor {
 		t.Errorf("focus = %v, want the editor", m.focus)
+	}
+}
+
+// Review focus: a symlink and the file it names, or two hard links, are one
+// file: it gets one tab, since two would overwrite each other's saves.
+func TestOneFileNeverGetsTwoTabs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "b-real.txt"), []byte("text\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(dir, "b-real.txt"), filepath.Join(dir, "a-hard.txt")); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, "b-real.txt", filepath.Join(dir, "c-sym.txt"))
+	m := send(newModel(dir, os.DirFS(dir), noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "enter", "shift+tab", "down", "enter", "shift+tab", "down", "enter") // a-hard, b-real, c-sym
+	if tabs, _ := m.tabs.Tabs(); len(tabs) != 1 || tabs[0].Key != "a-hard.txt" {
+		t.Errorf("tabs = %+v, want the one tab for the one file", tabs)
 	}
 }
 
@@ -456,7 +547,7 @@ func TestEnterOnAFolderOpensNoTab(t *testing.T) {
 }
 
 func TestEnterOnAnErrorRowDoesNothing(t *testing.T) {
-	m := press(newModel("/w", deniedFS{}, testKeys), "enter")
+	m := press(newModel("/w", deniedFS{}, noWrites, testKeys, noColors), "enter")
 	if m.tabs.Len() != 0 || m.focus != paneSidebar {
 		t.Errorf("enter on an error row: %d tabs, focus %v; want none and the sidebar", m.tabs.Len(), m.focus)
 	}
@@ -481,7 +572,7 @@ func TestCtrlPgUpAndPgDownSwitchTabs(t *testing.T) {
 			t.Errorf("after %s the active tab is %q, want %q", step.key, got, step.want)
 		}
 	}
-	m = press(m, "tab", "ctrl+pgdown") // from the sidebar too
+	m = press(m, "shift+tab", "ctrl+pgdown") // from the sidebar too
 	if got := activeKey(m); got != "app/main.go" || m.focus != paneSidebar {
 		t.Errorf("from the sidebar: active %q, focus %v; want app/main.go, the sidebar still focused", got, m.focus)
 	}
@@ -510,44 +601,59 @@ func TestCtrlWClosesTheActiveTab(t *testing.T) {
 	}
 }
 
-func TestScrollKeysNeedEditorFocus(t *testing.T) {
+func TestMoveKeysNeedEditorFocus(t *testing.T) {
 	m := openBig(30) // a page is 26 lines: the last one starts at line 75
-	for _, step := range []struct{ key, want string }{
-		{"down", "   2 line 2"},
-		{"pgdown", "  28 line 28"},
-		{"end", "  75 line 75"},
-		{"pgup", "  49 line 49"},
-		{"home", "   1 line 1"},
+	for _, step := range []struct {
+		key          string
+		first        string // the window's first row
+		line, offset int    // the cursor
+	}{
+		{"down", "   1 line 1", 1, 0},
+		{"pgdown", "  27 line 27", 27, 0},
+		{"end", "  27 line 27", 27, 7},
+		{"right", "  27 line 27", 27, 7}, // at a line end: the cursor stays on the line
+		{"home", "  27 line 27", 27, 0},
+		{"left", "  27 line 27", 27, 0}, // at a line start, likewise
+		{"ctrl+end", "  75 line 75", 99, 8},
+		{"pgup", "  49 line 49", 73, 7},
+		{"ctrl+home", "   1 line 1", 0, 0},
+		{"right", "   1 line 1", 0, 1},
+		{"left", "   1 line 1", 0, 0},
+		{"up", "   1 line 1", 0, 0},
 	} {
 		m = press(m, step.key)
-		if got := editorText(m)[0]; got != step.want {
-			t.Errorf("after %s the first row is %q, want %q", step.key, got, step.want)
+		line, offset := cursor(m)
+		if got := editorText(m)[0]; got != step.first || line != step.line || offset != step.offset {
+			t.Errorf("after %s: first row %q, cursor %d:%d; want %q, %d:%d", step.key, got, line, offset, step.first, step.line, step.offset)
 		}
 	}
-	m = press(m, "tab", "down", "end") // the sidebar focused: the text stays put
-	if got, want := editorText(m)[0], "   1 line 1"; got != want {
-		t.Errorf("with the sidebar focused the first row is %q, want %q", got, want)
+	m = press(m, "shift+tab", "down", "ctrl+end", "x") // the sidebar focused: the text stays put
+	if line, offset := cursor(m); line != 0 || offset != 0 || editorText(m)[0] != "   1 line 1" {
+		t.Errorf("with the sidebar focused: cursor %d:%d, first row %q; want 0:0 and line 1", line, offset, editorText(m)[0])
 	}
 }
 
-func TestEachTabKeepsItsScrollPosition(t *testing.T) {
+func TestEachTabKeepsItsCursor(t *testing.T) {
 	lines := []byte(numberedLines(100))
 	fsys := fstest.MapFS{"a.txt": {Data: lines}, "b.txt": {Data: lines}}
-	m := send(newModel("/w", fsys, testKeys), tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = press(m, "enter", "down", "down", "down", "down", "down") // a.txt, scrolled 5 lines
-	m = press(m, "tab", "down", "enter")                          // b.txt, at the top
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "enter", "pgdown", "right")   // a.txt, a page down
+	m = press(m, "shift+tab", "down", "enter") // b.txt, at the top
 	if got, want := editorText(m)[0], "   1 line 1"; got != want {
 		t.Errorf("b.txt's first row = %q, want %q", got, want)
 	}
 	m = press(m, "ctrl+pgup") // back to a.txt
-	if got, want := editorText(m)[0], "   6 line 6"; got != want {
+	if got, want := editorText(m)[0], "  27 line 27"; got != want {
 		t.Errorf("a.txt's first row = %q, want %q: it should keep its scroll position", got, want)
+	}
+	if line, offset := cursor(m); line != 26 || offset != 1 {
+		t.Errorf("a.txt's cursor at %d:%d, want 26:1", line, offset)
 	}
 }
 
 func TestResizeSetsTheTextWindowHeight(t *testing.T) {
 	m := send(openBig(30), tea.WindowSizeMsg{Width: 100, Height: 10})
-	m = press(m, "end") // a 6-line window: the last page starts at line 95
+	m = press(m, "ctrl+end") // a 6-line window: the last page starts at line 95
 	rows := editorText(m)
 	if len(rows) != 6 || rows[0] != "  95 line 95" || rows[5] != " 100 line 100" {
 		t.Errorf("after a resize to 10 rows and end, editor = %q; want lines 95 to 100", rows)
@@ -555,7 +661,7 @@ func TestResizeSetsTheTextWindowHeight(t *testing.T) {
 }
 
 func TestAFileOpenedBeforeTheFirstResizeFillsTheDefaultPane(t *testing.T) {
-	m := press(newModel("/w", bigFS, testKeys), "enter", "end") // 80x24: a 20-line window
+	m := press(newModel("/w", bigFS, noWrites, testKeys, noColors), "enter", "ctrl+end") // 80x24: a 20-line window
 	rows := editorText(m)
 	if len(rows) != 20 || rows[0] != "  81 line 81" || rows[19] != " 100 line 100" {
 		t.Errorf("editor = %q; want lines 81 to 100", rows)
@@ -565,7 +671,7 @@ func TestAFileOpenedBeforeTheFirstResizeFillsTheDefaultPane(t *testing.T) {
 // Review focus: a tiny terminal still shows one line of the open file, and
 // scrolling moves it.
 func TestTinyTerminalShowsOneLineOfText(t *testing.T) {
-	m := press(send(newModel("/w", bigFS, testKeys), tea.WindowSizeMsg{Width: 40, Height: 3}), "enter", "down")
+	m := press(send(newModel("/w", bigFS, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 40, Height: 3}), "enter", "down")
 	if rows := editorText(m); len(rows) != 1 || rows[0] != "   2 line 2" {
 		t.Errorf("editor = %q, want just line 2", rows)
 	}
@@ -576,24 +682,29 @@ func TestTinyTerminalShowsOneLineOfText(t *testing.T) {
 // lines exactly as wide as the screen, and no escape code from a file reaches
 // the terminal.
 func TestOpenFilesKeepTheLayout(t *testing.T) {
-	text := strings.Repeat("日本\tx\x1b[2J", 40) + "\n" + strings.Repeat("a", 500) + "\n\xff\xfe broken\n"
+	text := strings.Repeat("日本\tx\x1b[2J", 40) + "\n" + strings.Repeat("a", 500) + "\n\xff\xfe broken\n" +
+		"\U0001F3FDskin\n\t\U0000093Fsign\n" // marks with nothing to join: a skin tone, a vowel sign
 	fsys := fstest.MapFS{}
 	for i := range 12 {
 		fsys[fmt.Sprintf("ファイル-%02d.txt", i)] = &fstest.MapFile{Data: []byte(text)}
 	}
-	m := send(newModel("/w", fsys, testKeys), tea.WindowSizeMsg{Width: 83, Height: 12})
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 83, Height: 12})
 	for range 12 {
-		m = press(m, "enter", "tab", "down") // open each file in turn
+		m = press(m, "enter", "shift+tab", "down") // open each file in turn
 	}
 	if !strings.Contains(ansi.Strip(m.View()), "?[2J") {
 		t.Error("an escape code in a file should be drawn as ?, not sent to the terminal")
 	}
-	for _, w := range []int{83, 40, 12} {
-		m = send(m, tea.WindowSizeMsg{Width: w, Height: 12})
-		lines := strings.Split(m.View(), "\n")
-		for i, l := range lines[1 : len(lines)-1] {
-			if got := lipgloss.Width(l); got != w {
-				t.Errorf("width %d: body line %d is %d cells wide", w, i+1, got)
+	m = press(m, "shift+tab") // the editor focused, so the cursor is drawn
+	for _, moves := range [][]string{nil, {"end"}, {"down", "end"}, {"ctrl+end"}, {"ctrl+home", "right"}} {
+		m = press(m, moves...) // the cursor on a wide character, a tab, past the line, …
+		for _, w := range []int{83, 40, 12} {
+			m = send(m, tea.WindowSizeMsg{Width: w, Height: 12})
+			lines := strings.Split(m.View(), "\n")
+			for i, l := range lines[1 : len(lines)-1] {
+				if got := lipgloss.Width(l); got != w {
+					t.Errorf("after %q at width %d: body line %d is %d cells wide", moves, w, i+1, got)
+				}
 			}
 		}
 	}
@@ -612,7 +723,7 @@ func TestARebindingReplacesTheDefaultKeys(t *testing.T) {
 
 func TestAReboundGlobalKeyWorksFromBothPanes(t *testing.T) {
 	m := newReboundModel(t, overrides{"global": {"next-tab": {"alt+right"}}})
-	m = press(m, "right", "down", "enter", "tab", "down", "enter", "tab", "down", "enter") // three tabs, README.md active
+	m = press(m, "right", "down", "enter", "shift+tab", "down", "enter", "shift+tab", "down", "enter") // three tabs, README.md active
 	m = press(m, "ctrl+pgdown")
 	if got := activeKey(m); got != "README.md" {
 		t.Errorf("ctrl+pgdown should no longer switch tabs, active = %q", got)
@@ -621,7 +732,7 @@ func TestAReboundGlobalKeyWorksFromBothPanes(t *testing.T) {
 	if got := activeKey(m); got != "app/main.go" {
 		t.Errorf("from the editor alt+right made %q active, want app/main.go", got)
 	}
-	m = press(m, "tab", "alt+right")
+	m = press(m, "shift+tab", "alt+right")
 	if got := activeKey(m); got != "go.mod" || m.focus != paneSidebar {
 		t.Errorf("from the sidebar: active %q, focus %v; want go.mod, the sidebar still focused", got, m.focus)
 	}
@@ -656,21 +767,21 @@ func TestAReboundOpenKey(t *testing.T) {
 
 func TestTheFooterShowsTheReboundKeys(t *testing.T) {
 	example := overrides{ // the example in the README
-		"global":  {"next-tab": {"alt+right"}, "previous-tab": {"alt+left"}},
+		"global":  {"next-tab": {"alt+right"}, "previous-tab": {"alt+left"}, "switch-focus": {"shift+tab", "f6"}},
 		"sidebar": {"down": {"down", "j"}, "up": {"up", "k"}, "collapse": {"left", "h"}, "expand": {"right", "l"}},
-		"editor":  {"down": {"j", "down"}, "up": {"k", "up"}},
+		"editor":  {"line-start": {"home", "ctrl+a"}, "line-end": {"end", "ctrl+e"}},
 	}
-	unbound := overrides{"editor": {"up": {}, "down": {}}, "global": {"close-tab": {}}}
+	unbound := overrides{"global": {"close-tab": {}, "previous-tab": {}}}
 	for _, c := range []struct {
 		name string
 		m    model
 		want string
 	}{
-		{"sidebar focused", newReboundModel(t, example), " ↑↓: Move  ←→: Fold  enter: Open  tab: Focus  ctrl+q: Quit"},
+		{"sidebar focused", newReboundModel(t, example), " ↑↓: Move  ←→: Fold  enter: Open  shift+tab: Focus  ctrl+q: Quit"},
 		{"editor focused", press(newReboundModel(t, example), "down", "enter"),
-			" k/j: Scroll  alt+←/→: Tabs  ctrl+w: Close  tab: Focus  ctrl+q: Quit"},
+			" alt+←/→: Tabs  ctrl+w: Close  shift+tab: Focus  ctrl+q: Quit"},
 		{"unbound actions", press(newReboundModel(t, unbound), "down", "enter"),
-			" ctrl+pgup/pgdown: Tabs  tab: Focus  ctrl+q: Quit"},
+			" ctrl+pgdown: Tabs  shift+tab: Focus  ctrl+q: Quit"},
 	} {
 		if got := footerText(c.m); got != c.want {
 			t.Errorf("%s: footer = %q, want %q", c.name, got, c.want)
@@ -688,25 +799,25 @@ func TestABurstOfKeysActsOncePerKey(t *testing.T) {
 }
 
 // Review focus: in a burst, each key acts in the pane that has focus by
-// then: l opens the file and focuses the editor, so j scrolls it.
+// then: l opens the file and focuses the editor, so j is typed into it.
 func TestABurstOfKeysFollowsTheFocus(t *testing.T) {
-	keys := rebound(t, overrides{"sidebar": {"open": {"l"}}, "editor": {"down": {"j"}}})
-	m := press(send(newModel("/w", bigFS, keys), tea.WindowSizeMsg{Width: 100, Height: 30}), "lj") // one message
-	if got, want := editorText(m)[0], "   2 line 2"; got != want {
+	keys := rebound(t, overrides{"sidebar": {"open": {"l"}}})
+	m := press(send(newModel("/w", bigFS, noWrites, keys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30}), "lj") // one message
+	if got, want := editorText(m)[0], "   1 jline 1"; got != want {
 		t.Errorf("after lj the editor's first row = %q, want %q", got, want)
 	}
 }
 
 // Review focus: pasted text never acts, even when it holds bound keys.
 func TestPastedTextTriggersNothing(t *testing.T) {
-	m := newReboundModel(t, overrides{"sidebar": {"down": {"j"}}, "global": {"quit": {"q"}}})
+	m := newReboundModel(t, overrides{"sidebar": {"down": {"j"}, "open": {"q"}}})
 	for _, text := range []string{"j", "jqj"} {
 		nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true})
 		if cmd != nil {
-			t.Errorf("pasting %q must not quit", text)
+			t.Errorf("pasting %q must not return a command", text)
 		}
-		if got := sidebarRows(nm.(model))[0]; got != "❯ ▸ app" {
-			t.Errorf("pasting %q must not move the cursor, first row = %q", text, got)
+		if got := sidebarRows(nm.(model))[0]; got != "❯ ▸ app" || nm.(model).tabs.Len() != 0 {
+			t.Errorf("pasting %q must not move the cursor or open anything, first row = %q", text, got)
 		}
 	}
 }

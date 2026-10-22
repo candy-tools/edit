@@ -3,10 +3,11 @@
 A keyboard-driven text editor for the terminal, laid out like an IDE: a file
 sidebar on the left and the open files as tabs on the right.
 
-> **Status:** early bootstrap. The layout is in place — header, file sidebar,
-> tabbed editor pane and key-hint footer. The sidebar browses the workspace
-> as a folder tree and opens files, read-only, in tabs; nothing can be edited
-> yet. Every key can be rebound in a config file.
+> **Status:** early. The layout is in place — header, file sidebar, tabbed
+> editor pane and key-hint footer. The sidebar browses the workspace as a
+> folder tree and opens files in tabs, where you edit them, colored by their
+> syntax; edits are saved on their own, in the background. Every key can be
+> rebound, and the colors picked, in a config file.
 
 Built with the [Charm](https://charm.sh) stack: [Bubble Tea](https://github.com/charmbracelet/bubbletea)
 and [Lipgloss](https://github.com/charmbracelet/lipgloss), with [Cobra](https://github.com/spf13/cobra)
@@ -19,25 +20,95 @@ edit                                # opens the current directory as the workspa
 edit --config path/to/config.yaml   # reads the settings from another file
 ```
 
+These keys work in either pane:
+
 | Key | Action | Does |
 |-----|--------|------|
-| `tab` | `global.switch-focus` | Switch focus between the file sidebar and the editor |
-| `↑` / `↓` | `sidebar.up` / `sidebar.down`, `editor.up` / `editor.down` | Move through the file tree, or scroll the open file a line |
-| `pgup` / `pgdown` | `sidebar.page-up` / `sidebar.page-down`, `editor.page-up` / `editor.page-down` | Move or scroll a page up / down |
-| `home` / `end` | `sidebar.top` / `sidebar.bottom`, `editor.top` / `editor.bottom` | Jump to the first / last entry, or the top / bottom of the file |
+| `shift+tab` | `global.switch-focus` | Switch focus between the file sidebar and the editor |
+| `ctrl+pgdown` / `ctrl+pgup` | `global.next-tab` / `global.previous-tab` | Switch to the next / previous tab, wrapping around |
+| `ctrl+w` | `global.close-tab` | Save and close the active tab |
+| `ctrl+q` / `ctrl+c` | `global.quit` | Save every tab and quit |
+
+These, while the file sidebar has focus:
+
+| Key | Action | Does |
+|-----|--------|------|
+| `↑` / `↓` | `sidebar.up` / `sidebar.down` | Move through the file tree |
+| `pgup` / `pgdown` | `sidebar.page-up` / `sidebar.page-down` | Move a page up / down |
+| `home` / `end` | `sidebar.top` / `sidebar.bottom` | Jump to the first / last entry |
 | `→` | `sidebar.expand` | Expand a folder; on an open folder, step into it |
 | `←` | `sidebar.collapse` | Collapse a folder; elsewhere, go to the parent folder |
 | `enter` | `sidebar.open` | Open a file in a tab, or expand / collapse a folder |
-| `ctrl+pgdown` / `ctrl+pgup` | `global.next-tab` / `global.previous-tab` | Switch to the next / previous tab, wrapping around |
-| `ctrl+w` | `global.close-tab` | Close the active tab |
-| `ctrl+q` / `ctrl+c` | `global.quit` | Quit |
 
-The file tree keys work while the sidebar has focus, and the scroll keys while
-the editor has focus; the tab keys work in either. Every key can be rebound
-in the config file: see [Configuration](#configuration). The tree lists hidden
-files too, and reads a folder from disk each time it is expanded. A file is
-read when its tab opens: to see later changes on disk, close the tab and open
-the file again.
+And these, while the editor has focus:
+
+| Key | Action | Does |
+|-----|--------|------|
+| `←` / `→` | `editor.left` / `editor.right` | Move the cursor a character, within the line |
+| `↑` / `↓` | `editor.up` / `editor.down` | Move the cursor a line, keeping its column |
+| `home` / `end` | `editor.line-start` / `editor.line-end` | Go to the start / end of the line |
+| `pgup` / `pgdown` | `editor.page-up` / `editor.page-down` | Move a page up / down |
+| `ctrl+home` / `ctrl+end` | `editor.top` / `editor.bottom` | Go to the start / end of the file |
+| `enter` | `editor.newline` | Split the line at the cursor |
+| `tab` | `editor.insert-tab` | Type a tab |
+| `backspace`, `ctrl+h` | `editor.delete-left` | Delete the character before the cursor; at a line start, join the line to the one above |
+| `delete` | `editor.delete-right` | Delete the character under the cursor; at a line end, join the next line to this one |
+| `ctrl+k` | `editor.delete-line` | Delete the cursor's line |
+
+Any other character key types itself, and pasted text goes in at the cursor.
+Every key can be rebound in the config file: see
+[Configuration](#configuration). The tree lists hidden files too, and reads a
+folder from disk each time it is expanded.
+
+### Editing and saving
+
+There is no save key. edit writes each tab's edits to disk in the background,
+every 500 ms, so an edit is on disk about half a second after you make it.
+Closing a tab saves it first, and quitting saves every tab — as does stopping
+edit with SIGTERM or SIGINT, or closing its terminal. A file you only look at
+is never written.
+
+- **What is written** is the file as it was read, with your edits: every
+  byte you didn't touch stays as it was. A file whose lines all end in CRLF
+  keeps CRLF, on the lines you add too, and the final line break stays, or
+  stays absent.
+- **In place.** A file is overwritten where it is, so it keeps its
+  permissions, owner and hard links, and a symlink keeps pointing at the
+  file it names; no temporary file appears in the workspace.
+- **When a write fails** — a read-only file, a full disk — the tab's title
+  gets a `⚠` and the header says why; edit keeps retrying every 500 ms.
+  Closing or quitting then stops and asks: the same key again closes or
+  quits anyway, and the edits that couldn't be saved are lost; any other key
+  cancels. After quitting anyway, edit prints what it couldn't save.
+- A file is read when its tab opens. Changes made to it on disk while it is
+  open are not noticed, and the next save overwrites them.
+- The cursor moves over, and deletes, characters as they are drawn: an
+  accented letter or an emoji is one step. A tab is drawn as spaces up to
+  the next multiple of 4 columns; control characters, each byte that is not
+  valid UTF-8, and characters with no width of their own are drawn as `?`.
+  Long lines aren't wrapped: the view scrolls sideways.
+- Binary files and files over 10 MB open with a note instead of their text,
+  and can't be edited.
+
+### Syntax colors
+
+edit colors the text of Go (and `go.mod`), YAML, JSON, Markdown, shell,
+Makefile, JavaScript, Python and Java files by their syntax: keywords,
+strings, numbers, comments, the names of functions and types where they are
+declared and used, and, in Markdown, headings, emphasis, code and links, a
+fenced code block in one of these languages colored as that language. A
+file's language comes from its name — `main.go`, `Makefile`, `.bashrc` —
+or, when its name says nothing, from a `#!` line naming `sh`, `bash`, `node`
+or `python`. Other files are drawn without colors.
+
+- The colors come from parsing the whole file in the background, so typing
+  never waits for them. An edit shows at once, the colors after it moving
+  along with their characters; the colors of what you typed follow when the
+  parse lands, a few milliseconds later for most files, up to about a second
+  for a large Markdown file.
+- Files over 256 KB, and lines over 20,000 bytes, are drawn without colors.
+  A parse that takes over 2 s stops, and the file keeps the colors it had.
+- The `theme` setting picks the colors: see [Configuration](#configuration).
 
 ## Configuration
 
@@ -45,25 +116,45 @@ edit reads its settings from `config.yaml` in an `edit` folder of your config
 directory: `~/.config/edit/config.yaml` on Linux (or under `$XDG_CONFIG_HOME`
 when it is set), `~/Library/Application Support/edit/config.yaml` on macOS.
 `--config` names another file. The file is optional: without it, edit uses
-the keys above. edit reads it once, at start-up, and never writes it.
+the keys above and the theme `candy`. edit reads it once, at start-up, and
+never writes it.
 
-Its one setting, `shortcuts`, rebinds keys. It has three scopes: `global`,
-whose actions work in either pane, `sidebar` and `editor`. Each scope maps
-action names, from the table above, to a key or a list of keys:
+It has two settings. `theme` picks the colors of the text:
+
+```yaml
+theme: dracula
+```
+
+| Theme | For |
+|---|---|
+| `candy` | dark terminals, in the 256-color palette of edit's own frame; the default |
+| `candy-light` | light terminals |
+| `dracula` | the [Dracula](https://draculatheme.com) palette |
+| `gruvbox` | the [Gruvbox](https://github.com/morhetz/gruvbox) dark palette |
+| `none` | no colors |
+
+A theme sets the color of the text, bold, italics and underline, never the
+background, so each works on your terminal's own. On a terminal without
+colors, or with `NO_COLOR` set, edit draws none, whatever the theme.
+
+`shortcuts` rebinds keys. It has three scopes: `global`, whose actions work
+in either pane, `sidebar` and `editor`. Each scope maps action names, from
+the tables above, to a key or a list of keys:
 
 ```yaml
 shortcuts:
   global:
     next-tab: alt+right        # a single key needs no brackets
     previous-tab: alt+left
+    switch-focus: [shift+tab, f6]
   sidebar:
-    down: [down, j]
+    down: [down, j]            # the first key is the one the footer shows
     up: [up, k]
     collapse: [left, h]
     expand: [right, l]
   editor:
-    down: [j, down]            # the first key is the one the footer shows
-    up: [k, up]
+    line-start: [home, ctrl+a]
+    line-end: [end, ctrl+e]
 ```
 
 - Listing an action replaces all of its default keys; the actions you don't
@@ -72,6 +163,10 @@ shortcuts:
 - A key does one thing wherever it works: two actions of one scope can't
   share a key, and neither can a `global` action and a pane's. The same key in
   `sidebar` and `editor` is fine, since only one pane has focus.
+- Keys that type text — a single character, or `space` — can't be bound in
+  `editor`, where they type, nor in `global`, whose actions work in the
+  editor too. `alt+` and `ctrl+` keys are fine there, and letters are fine in
+  `sidebar`.
 - The first key of an action is the one the footer shows.
 - A YAML anchor lets scopes share a list: `down: &down [down, j]` in
   `sidebar`, then `down: *down` in `editor`.
@@ -101,8 +196,15 @@ the file and lists every problem:
 
 ```
 config /home/you/.config/edit/config.yaml: invalid shortcuts:
+  editor.down: key "j" types text
   editor.up: unknown key "ctrl+uo"
   key "j" is bound to both sidebar.down and sidebar.up
+```
+
+or, for a theme edit doesn't have:
+
+```
+config /home/you/.config/edit/config.yaml: unknown theme "monokai": want candy, candy-light, dracula, gruvbox or none
 ```
 
 ## Install
@@ -141,6 +243,10 @@ With a Go 1.26+ toolchain installed:
 go install github.com/candy-tools/edit@latest
 ```
 
+This binary embeds the grammars of every language the syntax-coloring
+library knows, about 32 MB; the release binaries embed only edit's ten,
+about 14 MB.
+
 Or grab a prebuilt `tar.gz` (`.zip` on Windows) for your OS/arch from the
 [releases page](https://github.com/candy-tools/edit/releases).
 
@@ -159,10 +265,33 @@ make coverage     # enforce the per-package coverage threshold
 make verify       # all of the above plus the license check
 ```
 
-Packages under `libs/` (`libs/treeview`, `libs/tabset`, `libs/textview` and
-`libs/keymap`) are app-agnostic: they must never import `app/` or
-`internal/`. A depguard rule in `.golangci.yaml` enforces this, so
-`make lint` fails on a wrong-way import.
+Packages under `libs/` (`libs/treeview`, `libs/tabset`, `libs/textedit`,
+`libs/keymap`, `libs/syntax` and `libs/syntax/treesitter`) are app-agnostic:
+they must never import `app/` or `internal/`. A depguard rule in
+`.golangci.yaml` enforces this, so `make lint` fails on a wrong-way import.
+
+### Syntax colors
+
+`libs/syntax` is the plug-in boundary: an engine implements its `Language`
+and `Tree`, and its `Highlighter` keeps one text's tree up to date in the
+background. `libs/syntax/treesitter` is the engine edit uses: tree-sitter
+grammars run in pure Go by
+[gotreesitter](https://github.com/odvcencio/gotreesitter), with edit's own
+highlight queries in `libs/syntax/treesitter/queries/`.
+
+gotreesitter's build tags pick the grammars a build embeds. The Makefile's
+`GRAMMARS` lists edit's, and every `make` target passes them to `go`, as
+`.golangci.yaml` and `.goreleaser.yaml` do; a plain `go build` or `go test`
+works too, embedding all 206. To color another language:
+
+1. add its grammar's tag to `GRAMMARS`, `.golangci.yaml` and `.goreleaser.yaml`;
+2. write `libs/syntax/treesitter/queries/<grammar>/highlights.scm`, capturing
+   only the names `libs/syntax/captures.go` lists;
+3. add the language to the list in `libs/syntax/treesitter/treesitter.go`,
+   and a text of it to the engine's tests.
+
+The engine's tests fail on a grammar missing from the build, a query that
+doesn't compile, or a capture name outside the list.
 
 ### Run
 

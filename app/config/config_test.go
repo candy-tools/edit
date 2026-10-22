@@ -209,3 +209,27 @@ func TestDefaultPathWithoutAConfigDirectory(t *testing.T) {
 		t.Errorf("DefaultPath = %q, want an error", got)
 	}
 }
+
+func TestLoadTheTheme(t *testing.T) {
+	for text, want := range map[string]string{
+		"theme: dracula\n":                "dracula",
+		"theme: \"candy-light\"\n":        "candy-light",
+		"shortcuts: {}\ntheme: gruvbox\n": "gruvbox",
+		"theme: 7\n":                      "7", // read as written: which themes exist is for the editor to say
+	} {
+		if cfg, err := load(t, text); err != nil || cfg.Theme != want {
+			t.Errorf("%q: Load = %q, %v; want theme %q", text, cfg.Theme, err, want)
+		}
+	}
+}
+
+func TestLoadAThemeThatIsNoName(t *testing.T) {
+	for _, text := range []string{"theme:\n", "theme: ~\n", "theme: [dracula]\n", "theme: {name: dracula}\n"} {
+		if _, err := load(t, text); err == nil || err.Error() != "theme: want a theme name" {
+			t.Errorf("%q: Load = %v, want theme: want a theme name", text, err)
+		}
+	}
+	if _, err := load(t, "theme: dracula\nthemes: candy\n"); err == nil || err.Error() != `unknown setting "themes"` {
+		t.Errorf("a misspelt setting next to the theme: Load = %v, want it unknown", err)
+	}
+}

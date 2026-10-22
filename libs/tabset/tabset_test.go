@@ -252,3 +252,26 @@ func TestTabsReturnsACopy(t *testing.T) {
 	tabs[0].Key = "changed"
 	checkRow(t, s, "| a [b] |")
 }
+
+func TestRemeasurePicksUpChangedWidths(t *testing.T) {
+	widths := map[string]int{"a": 5, "b": 5, "c": 5} // what each tab shows, which the caller changes
+	s := New(func(tabs []Tab[string, int]) []int {
+		out := make([]int, len(tabs))
+		for i, t := range tabs {
+			out[i] = widths[t.Key]
+		}
+		return out
+	})
+	s.SetWidth(15)
+	for _, k := range []string{"a", "b", "c"} {
+		s.Open(k, func() int { return 0 })
+	}
+	checkRow(t, s, "| a b [c] |")
+	widths["a"] = 10
+	checkRow(t, s, "| a b [c] |") // nothing measures until asked to
+	s.Remeasure()
+	checkRow(t, s, "a | b [c] |")
+	widths["a"] = 5
+	s.Remeasure()
+	checkRow(t, s, "| a b [c] |")
+}

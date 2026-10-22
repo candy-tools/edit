@@ -18,7 +18,7 @@ func TestLoadDocumentNeverOpensANamedPipe(t *testing.T) {
 		t.Skipf("cannot make a named pipe here: %v", err)
 	}
 	done := make(chan *document, 1)
-	go func() { done <- loadDocument(os.DirFS(dir), "pipe") }()
+	go func() { done <- load(os.DirFS(dir), "pipe") }()
 	select {
 	case doc := <-done:
 		checkNote(t, doc, "pipe", "not a regular file")

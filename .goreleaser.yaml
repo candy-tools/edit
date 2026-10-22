@@ -18,6 +18,21 @@ builds:
       - CGO_ENABLED=0
     flags:
       - -trimpath
+    # embed only the grammars edit colors with, as the Makefile's GRAMMARS
+    # lists them
+    tags:
+      - grammar_subset
+      - grammar_subset_go
+      - grammar_subset_gomod
+      - grammar_subset_yaml
+      - grammar_subset_json
+      - grammar_subset_markdown
+      - grammar_subset_markdown_inline
+      - grammar_subset_bash
+      - grammar_subset_make
+      - grammar_subset_javascript
+      - grammar_subset_python
+      - grammar_subset_java
     ldflags:
       - -s -w
       - -X github.com/candy-tools/edit/app/metainfo.Version={{.Version}}

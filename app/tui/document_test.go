@@ -5,21 +5,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"testing/fstest"
 )
 
-// docLines returns all of doc's lines, failing the test when doc holds a note
-// instead of text.
-func docLines(t *testing.T, doc *document) []string {
-	t.Helper()
-	if doc.text == nil {
-		t.Fatalf("document %q has no text, only the note %q", doc.path, doc.note)
-	}
-	doc.setHeight(doc.text.Len())
-	lines, _ := doc.text.Window()
-	return lines
+// load is loadDocument for a test that never writes.
+func load(fsys fs.FS, path string) *document {
+	return loadDocument(fsys, noWrites, path)
 }
 
 // checkNote fails the test unless doc, loaded from path, holds just the note
@@ -47,21 +39,21 @@ func TestLoadDocumentReadsText(t *testing.T) {
 		"late-nul":    {Data: withNULAt(binarySniffLen+1, binarySniffLen)},
 	}
 	for _, c := range []struct {
-		path string
-		want []string
+		path  string
+		lines int
 	}{
-		{"app/main.go", []string{"package main", "", "func main() {}"}},
-		{"empty", []string{""}},
-		{"dos.txt", []string{"one", "two"}},
-		{"late-nul", []string{string(withNULAt(binarySniffLen+1, binarySniffLen))}},
+		{"app/main.go", 3},
+		{"empty", 1},
+		{"dos.txt", 2},
+		{"late-nul", 1},
 	} {
-		doc := loadDocument(fsys, c.path)
-		if doc.path != c.path || doc.note != "" {
+		doc := load(fsys, c.path)
+		if doc.path != c.path || doc.note != "" || doc.text == nil {
 			t.Errorf("%s: path %q, note %q; want its text", c.path, doc.path, doc.note)
 			continue
 		}
-		if got := docLines(t, doc); !slices.Equal(got, c.want) {
-			t.Errorf("%s: lines = %q, want %q", c.path, got, c.want)
+		if got, want := doc.text.String(), string(fsys[c.path].Data); got != want || doc.text.Len() != c.lines {
+			t.Errorf("%s: text %q in %d lines, want the file's %q in %d", c.path, got, doc.text.Len(), want, c.lines)
 		}
 	}
 }
@@ -78,9 +70,9 @@ func TestLoadDocumentNotes(t *testing.T) {
 		{"app", "not a regular file"},
 		{"gone", "⚠ file does not exist"},
 	} {
-		checkNote(t, loadDocument(fsys, c.path), c.path, c.want)
+		checkNote(t, load(fsys, c.path), c.path, c.want)
 	}
-	checkNote(t, loadDocument(deniedFS{}, "secret"), "secret", "⚠ permission denied")
+	checkNote(t, load(deniedFS{}, "secret"), "secret", "⚠ permission denied")
 }
 
 func TestLoadDocumentSizeLimit(t *testing.T) {
@@ -88,10 +80,10 @@ func TestLoadDocumentSizeLimit(t *testing.T) {
 		"limit":   {Data: bytes.Repeat([]byte("a"), maxDocumentSize)},
 		"too-big": {Data: bytes.Repeat([]byte("a"), maxDocumentSize+1)},
 	}
-	if doc := loadDocument(fsys, "limit"); doc.text == nil {
+	if doc := load(fsys, "limit"); doc.text == nil {
 		t.Errorf("a file of exactly 10 MB should be shown, got the note %q", doc.note)
 	}
-	checkNote(t, loadDocument(fsys, "too-big"), "too-big", "too large to show (over 10 MB)")
+	checkNote(t, load(fsys, "too-big"), "too-big", "too large to show (over 10 MB)")
 }
 
 // grownFS is a filesystem whose Stat reports every file as 1 byte long, as if
@@ -113,7 +105,7 @@ func (oneByteInfo) Size() int64 { return 1 }
 
 func TestLoadDocumentCapsTheRead(t *testing.T) {
 	fsys := grownFS{fstest.MapFS{"log": {Data: bytes.Repeat([]byte("a"), maxDocumentSize+1)}}}
-	checkNote(t, loadDocument(fsys, "log"), "log", "too large to show (over 10 MB)")
+	checkNote(t, load(fsys, "log"), "log", "too large to show (over 10 MB)")
 }
 
 // lockedFS is a filesystem that lets every file be looked at but not opened,
@@ -126,13 +118,13 @@ func (lockedFS) Open(name string) (fs.File, error) {
 
 func TestLoadDocumentWhenOpeningFails(t *testing.T) {
 	fsys := lockedFS{fstest.MapFS{"notes.txt": {Data: []byte("hi")}}}
-	checkNote(t, loadDocument(fsys, "notes.txt"), "notes.txt", "⚠ permission denied")
+	checkNote(t, load(fsys, "notes.txt"), "notes.txt", "⚠ permission denied")
 }
 
 func TestLoadDocumentBrokenSymlink(t *testing.T) {
 	dir := t.TempDir()
 	mustSymlink(t, "missing", filepath.Join(dir, "broken"))
-	checkNote(t, loadDocument(os.DirFS(dir), "broken"), "broken", "⚠ no such file or directory")
+	checkNote(t, load(os.DirFS(dir), "broken"), "broken", "⚠ no such file or directory")
 }
 
 // Review focus: a file you can't read on a real disk can still be looked at,
@@ -146,7 +138,7 @@ func TestLoadDocumentOnARealUnreadableFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "secret"), []byte("hidden"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	checkNote(t, loadDocument(os.DirFS(dir), "secret"), "secret", "⚠ permission denied")
+	checkNote(t, load(os.DirFS(dir), "secret"), "secret", "⚠ permission denied")
 }
 
 // Review focus: fs.FS paths must be valid UTF-8, so a file whose name is not
@@ -156,13 +148,21 @@ func TestLoadDocumentNonUTF8Name(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "bad\xff.txt"), []byte("text"), 0o600); err != nil {
 		t.Skipf("this filesystem rejects non-UTF-8 names: %v", err)
 	}
-	checkNote(t, loadDocument(os.DirFS(dir), "bad\xff.txt"), "bad\xff.txt", "⚠ invalid argument")
+	checkNote(t, load(os.DirFS(dir), "bad\xff.txt"), "bad\xff.txt", "⚠ invalid argument")
 }
 
-func TestSetHeightOnANoteDoesNothing(t *testing.T) {
+func TestSetSizeOnANoteDoesNothing(t *testing.T) {
 	doc := &document{path: "logo.png", note: "binary file"}
-	doc.setHeight(10)
+	doc.setSize(40, 10)
 	if doc.text != nil {
 		t.Error("a document showing a note must not get a text window")
+	}
+}
+
+func TestGutterWidth(t *testing.T) {
+	for _, c := range []struct{ lines, want int }{{1, 3}, {9, 3}, {10, 4}, {100, 5}} {
+		if got := gutterWidth(c.lines); got != c.want {
+			t.Errorf("gutterWidth(%d) = %d, want %d", c.lines, got, c.want)
+		}
 	}
 }

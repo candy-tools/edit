@@ -1,16 +1,24 @@
 default: help
 
+# GRAMMARS are the build tags that make gotreesitter embed only the grammars
+# edit colors with; without them a build embeds all 206. .golangci.yaml and
+# .goreleaser.yaml list them too.
+GRAMMARS := grammar_subset grammar_subset_go grammar_subset_gomod \
+	grammar_subset_yaml grammar_subset_json grammar_subset_markdown \
+	grammar_subset_markdown_inline grammar_subset_bash grammar_subset_make \
+	grammar_subset_javascript grammar_subset_python grammar_subset_java
+
 #==========================================================================================
 ##@ Testing
 #==========================================================================================
 test: ## run tests with coverage
-	@go test ./... -cover
+	@go test -tags "$(GRAMMARS)" ./... -cover
 
 lint: ## run the go linter (needs golangci-lint)
 	@golangci-lint run
 
 vet: ## run go vet
-	@go vet ./...
+	@go vet -tags "$(GRAMMARS)" ./...
 
 license-check: ## check for invalid licenses
 	# depends on https://github.com/elastic/go-licence-detector
@@ -21,7 +29,7 @@ COVERAGE_THRESHOLD ?= 70
 coverage: ## check test coverage meets the threshold (app, internal and libs; metainfo excluded: linker-stamped vars only)
 	@fail=0; \
 	for pkg in $$(go list ./... | grep -E '/(app|internal|libs)/' | grep -v '/app/metainfo$$'); do \
-		go test -coverprofile=coverage.out -covermode=atomic $$pkg > /dev/null; \
+		go test -tags "$(GRAMMARS)" -coverprofile=coverage.out -covermode=atomic $$pkg > /dev/null; \
 		if [ -f coverage.out ]; then \
 			coverage=$$(go tool cover -func=coverage.out | grep total: | awk '{print $$3}' | sed 's/%//'); \
 			if [ $$(echo "$$coverage < $(COVERAGE_THRESHOLD)" | bc -l) -eq 1 ]; then \
@@ -43,7 +51,7 @@ verify: test vet lint license-check coverage ## run the full verification suite
 ##@ Running
 #==========================================================================================
 run: ## run the editor on the current directory
-	@go run .
+	@go run -tags "$(GRAMMARS)" .
 
 #==========================================================================================
 ##@ Building

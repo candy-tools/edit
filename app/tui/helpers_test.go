@@ -7,7 +7,18 @@ import (
 
 	"github.com/candy-tools/edit/libs/keymap"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
+
+// colors makes lipgloss draw 256 colors until the test ends, as it does on
+// most terminals: a test's output is no terminal, so it draws none there.
+func colors(t *testing.T) {
+	t.Helper()
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
+}
 
 // testFS is the workspace the model tests open: a folder and two files.
 var testFS = fstest.MapFS{
@@ -31,9 +42,26 @@ var testKeys = func() *keymap.Map {
 }()
 
 // newTestModel returns a fresh model on a fixed workspace, with the default
-// keys, sized to a 100x30 terminal.
+// keys, sized to a 100x30 terminal. It must not write: a test that saves
+// edits uses newEditModel.
 func newTestModel() model {
-	return send(newModel("/work/project", testFS, testKeys), tea.WindowSizeMsg{Width: 100, Height: 30})
+	return send(newModel("/work/project", testFS, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+}
+
+// noColors is the theme none, for the model tests, where colors don't
+// matter.
+var noColors = func() Theme {
+	theme, err := NewTheme("none")
+	if err != nil {
+		panic(err)
+	}
+	return theme
+}()
+
+// noWrites is the writer of a model that must not write: a write there is a
+// bug, so it panics.
+func noWrites(path string, _ []byte) error {
+	panic("unexpected write of " + path)
 }
 
 // rebound is edit's keymap with the keys o rebinds.
@@ -49,7 +77,7 @@ func rebound(t *testing.T, o overrides) *keymap.Map {
 // newReboundModel is newTestModel with the keys o rebinds.
 func newReboundModel(t *testing.T, o overrides) model {
 	t.Helper()
-	return send(newModel("/work/project", testFS, rebound(t, o)), tea.WindowSizeMsg{Width: 100, Height: 30})
+	return send(newModel("/work/project", testFS, noWrites, rebound(t, o), noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
 }
 
 // send applies msg and returns the updated model.
@@ -70,21 +98,40 @@ func press(m model, keys ...string) model {
 // namedKeys are the keys keyMsg knows by name.
 var namedKeys = map[string]tea.KeyType{
 	"tab":         tea.KeyTab,
+	"shift+tab":   tea.KeyShiftTab,
+	"space":       tea.KeySpace,
 	"ctrl+c":      tea.KeyCtrlC,
 	"ctrl+q":      tea.KeyCtrlQ,
 	"ctrl+x":      tea.KeyCtrlX,
+	"ctrl+h":      tea.KeyCtrlH,
+	"ctrl+k":      tea.KeyCtrlK,
 	"up":          tea.KeyUp,
 	"down":        tea.KeyDown,
 	"left":        tea.KeyLeft,
 	"right":       tea.KeyRight,
 	"enter":       tea.KeyEnter,
+	"backspace":   tea.KeyBackspace,
+	"delete":      tea.KeyDelete,
 	"pgup":        tea.KeyPgUp,
 	"pgdown":      tea.KeyPgDown,
 	"home":        tea.KeyHome,
 	"end":         tea.KeyEnd,
+	"ctrl+home":   tea.KeyCtrlHome,
+	"ctrl+end":    tea.KeyCtrlEnd,
 	"ctrl+pgup":   tea.KeyCtrlPgUp,
 	"ctrl+pgdown": tea.KeyCtrlPgDown,
 	"ctrl+w":      tea.KeyCtrlW,
+}
+
+// paste sends text as Bubble Tea sends pasted text: one message, marked as
+// a paste.
+func paste(m model, text string) model {
+	return send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true})
+}
+
+// cursor returns the cursor of m's active tab: its line and byte offset.
+func cursor(m model) (line, offset int) {
+	return m.activeDocument().text.Cursor()
 }
 
 // keyMsg is the message Bubble Tea sends for the key named s: one of
