@@ -146,12 +146,15 @@ func FuzzRoundTrip(f *testing.F) {
 // window, the window leaves no empty space below the last line while
 // earlier lines are hidden, the version changes exactly when the text does,
 // each edit that changes the text reports one change that turns the old
-// text into the new, and Size is the text's length.
+// text into the new, Size is the text's length, and the history's count of
+// the text its steps hold is right — undo and redo among the edits.
 func FuzzEdits(f *testing.F) {
 	f.Add("ab\ncd", []byte{0, 1, 2, 3, 9, 10, 13, 14, 15, 16})
 	f.Add("e\U00000301\xff\t日👨👩\r\nx", []byte{1, 1, 1, 12, 5, 0, 13, 11, 7, 6, 0x50})
 	f.Add(numbered(9), []byte{9, 15, 15, 7, 6, 0xd0, 3, 15})
 	f.Add("a\r\nb\r\n", []byte{15, 11, 10, 9, 15, 13, 14, 15})
+	f.Add("ab\ncd", []byte{10, 10, 17, 18, 13, 13, 17, 17, 18, 15, 17, 11, 18})
+	f.Add("a\r\nb\nc", []byte{5, 13, 17, 15, 17, 18, 18, 12, 17})
 	f.Fuzz(func(t *testing.T, text string, ops []byte) {
 		b := sized(text, 7, 3)
 		changes := record(b)
@@ -167,6 +170,7 @@ func FuzzEdits(f *testing.F) {
 				t.Fatalf("op %d: Size is %d, String %d bytes", op, b.Size(), len(b.String()))
 			}
 			checkInvariants(t, b)
+			checkHeld(t, b)
 		}
 	})
 }
@@ -319,9 +323,10 @@ func TestLineTextAndSize(t *testing.T) {
 	}
 }
 
-// edit applies to b the move, edit or resize op picks.
+// edit applies to b the move, edit, resize, undo or redo op picks; an op
+// below 17 is no undo or redo.
 func edit(b *Buffer, op byte) {
-	switch op % 17 {
+	switch op % 19 {
 	case 0:
 		b.Left()
 	case 1:
@@ -356,6 +361,10 @@ func edit(b *Buffer, op byte) {
 		b.DeleteLine()
 	case 16:
 		b.SetSize(1+int(op>>4)%8, 1+int(op>>6)%3)
+	case 17:
+		b.Undo()
+	case 18:
+		b.Redo()
 	}
 }
 

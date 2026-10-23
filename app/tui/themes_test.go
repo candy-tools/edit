@@ -1,19 +1,28 @@
 package tui
 
 import (
+	"fmt"
+	"image/color"
+	"strconv"
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/candy-tools/edit/libs/syntax"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // describe says how s draws, as palette writes it: its foreground color,
 // then bold, italic and underline; "" for unstyled.
 func describe(s lipgloss.Style) string {
 	var parts []string
-	if c, ok := s.GetForeground().(lipgloss.Color); ok {
-		parts = append(parts, string(c))
+	switch c := s.GetForeground().(type) {
+	case ansi.BasicColor:
+		parts = append(parts, strconv.Itoa(int(c)))
+	case ansi.IndexedColor:
+		parts = append(parts, strconv.Itoa(int(c)))
+	case color.RGBA:
+		parts = append(parts, fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B))
 	}
 	for _, a := range []struct {
 		on   bool
@@ -98,7 +107,6 @@ func TestNewTheme(t *testing.T) {
 }
 
 func TestThemeDrawsARunInItsClassStyle(t *testing.T) {
-	colors(t)
 	theme, _ := NewTheme("candy")
 	if got := theme.draw(theme.class("keyword"), "func"); !strings.Contains(got, "\x1b[38;5;205m") || !strings.Contains(got, "func") {
 		t.Errorf("a keyword in candy: %q, want it in color 205", got)

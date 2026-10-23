@@ -19,6 +19,11 @@ const (
 	binarySniffLen = 8000
 	// tooLargeNote is what the tab of a file over maxDocumentSize shows.
 	tooLargeNote = "too large to show (over 10 MB)"
+	// maxUndoSteps is how many steps of its edits a tab can undo, as vim
+	// keeps by default, and maxUndoSize how much text those steps hold at
+	// most, the newest step aside: a few pastes of a file of maxDocumentSize.
+	maxUndoSteps = 1000
+	maxUndoSize  = 64 << 20
 )
 
 // document is one open file: what its tab shows and edits, how far its edits
@@ -51,6 +56,7 @@ func loadDocument(fsys fs.FS, write writeFunc, path string) *document {
 		return doc
 	}
 	doc.text = textedit.New(string(data), tabWidth)
+	doc.text.LimitHistory(maxUndoSteps, maxUndoSize)
 	doc.file = &file{path: path, write: write}
 	return doc
 }

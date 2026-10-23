@@ -15,7 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -213,7 +213,7 @@ func TestAFailedWriteShowsAndIsRetried(t *testing.T) {
 	if !again {
 		t.Error("a failed write should be retried at the next tick")
 	}
-	if header := strings.Split(ansi.Strip(m.View()), "\n")[0]; !strings.Contains(header, "⚠ Can't save go.mod: permission denied") {
+	if header := strings.Split(ansi.Strip(m.View().Content), "\n")[0]; !strings.Contains(header, "⚠ Can't save go.mod: permission denied") {
 		t.Errorf("header %q should say why go.mod can't be saved", header)
 	}
 	if top := topBorder(m); !strings.Contains(top, "─ ⚠ go.mod ─") {
@@ -224,7 +224,7 @@ func TestAFailedWriteShowsAndIsRetried(t *testing.T) {
 	if again || m.activeDocument().unsaved() {
 		t.Error("the retry should save go.mod")
 	}
-	if header := strings.Split(ansi.Strip(m.View()), "\n")[0]; !strings.Contains(header, "/work/project") || strings.Contains(header, "⚠") {
+	if header := strings.Split(ansi.Strip(m.View().Content), "\n")[0]; !strings.Contains(header, "/work/project") || strings.Contains(header, "⚠") {
 		t.Errorf("header %q should show the workspace again", header)
 	}
 	if top := topBorder(m); strings.Contains(top, "⚠") {
@@ -517,9 +517,10 @@ func TestDiskWriterCreatesADeletedFileAgain(t *testing.T) {
 }
 
 // runOpts are the options that let a real Bubble Tea program run in a test:
-// keys from in, the screen thrown away, and no signal handling of its own.
+// keys from in, the screen thrown away, a 100x30 terminal, and no signal
+// handling of its own.
 func runOpts(in io.Reader) []tea.ProgramOption {
-	return []tea.ProgramOption{tea.WithInput(in), tea.WithOutput(io.Discard), tea.WithoutSignalHandler()}
+	return []tea.ProgramOption{tea.WithInput(in), tea.WithOutput(io.Discard), tea.WithWindowSize(100, 30), tea.WithoutSignalHandler()}
 }
 
 func TestRunSavesWhenTheProgramQuits(t *testing.T) {

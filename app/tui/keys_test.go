@@ -37,6 +37,8 @@ var defaultKeys = map[string][]string{
 	"editor.delete-left":  {"backspace", "ctrl+h"},
 	"editor.delete-right": {"delete"},
 	"editor.delete-line":  {"ctrl+k"},
+	"editor.undo":         {"ctrl+z"},
+	"editor.redo":         {"ctrl+shift+z", "ctrl+y"},
 }
 
 func TestTheDefaultKeys(t *testing.T) {

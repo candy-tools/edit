@@ -23,3 +23,10 @@ Prefer the CLI over editing by hand: it writes this file in the exact format
 above. `todo add`, `todo done|progress|defer|reopen`, `todo edit`, `todo rm`
 and `todo list --json` cover the common actions — run `todo --help`.
 -->
+
+# features
+
+- [ ] cmd + space to open actions menui similar top vs code
+- [ ] files should also read if modified externaly
+- [ ] git integration
+- [ ] close a file

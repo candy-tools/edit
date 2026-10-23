@@ -2,7 +2,11 @@
 // they trigger, and lets the user rebind them. Actions live in scopes: the
 // global scope is active everywhere, and the caller says which other scope
 // is active with it, such as the focused pane. Keys are written as Bubble Tea
-// names them ("ctrl+w", "pgdown", "j"), with "space" for the space bar.
+// names them, modifiers first ("ctrl+w", "pgdown", "ctrl+shift+z", "j"),
+// with "space" for the space bar. A terminal can send one key in several
+// ways — xterm reports ctrl+shift+z as a capital Z with shift, the kitty
+// keyboard protocol as a small z — so the map gives each key press, and each
+// key it is given, one name: see New.
 //
 // A scope can be one where keys type text, such as a text editor's: there a
 // key that types text can't be bound, nor in the global scope, which is
@@ -20,7 +24,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Global is the scope whose actions are active alongside every other scope.
@@ -50,18 +54,28 @@ type Map struct {
 // there instead, so an empty list leaves it without keys. A key listed twice
 // for one action is kept once.
 //
+// A key is any of the modifiers "ctrl+", "alt+", "shift+", "meta+", "hyper+"
+// and "super+", each at most once and in any order, then the name Bubble Tea
+// gives a key that isn't a character ("enter", "pgdown", "f5", "space") or a
+// single character other than a control character; " " is the space bar.
+// Shift alone before a character is no key: the character it types is ("J",
+// not "shift+j"). New keeps a key in the spelling the key press gets: the
+// modifiers in Bubble Tea's order, ctrl, alt, shift, meta, hyper, super, and
+// a capital letter after a modifier as shift and the small letter, so
+// "shift+ctrl+Z" is "ctrl+shift+z".
+//
 // typing names the scopes where keys type text, such as a text editor's. A
-// key that types text — a single character, or space, without alt — can't
-// be bound in them, nor in the global scope when there are any, since
-// global actions are active alongside them.
+// key that types text — a single character, or the space bar with shift or
+// without — can't be bound in them, nor in the global scope when there are
+// any, since global actions are active alongside them.
 //
 // It returns an error listing every problem, one per line, sorted: a scope
-// or an action in overrides that actions doesn't have, a key name Bubble Tea
-// can't report, a key that types text bound where keys type text, a
-// Required action left with no keys, and a key bound to two actions that are
-// active together, because they are in the same scope or one of them is
-// global. The defaults are checked too, since an override can clash with
-// another action's default key.
+// or an action in overrides that actions doesn't have, a key that is no key,
+// a key that types text bound where keys type text, a Required action left
+// with no keys, and a key bound to two actions that are active together,
+// because they are in the same scope or one of them is global. The defaults
+// are checked too, since an override can clash with another action's
+// default key.
 //
 // An action with an empty scope or name, two actions with the same ID, or a
 // typing scope no action is in, is a bug in the caller: New panics.
@@ -84,7 +98,7 @@ func New(actions []Action, overrides map[string]map[string][]string, typing ...s
 			problems = append(problems, a.String()+": needs at least one key")
 		}
 		for _, k := range keys {
-			if !valid(k) {
+			if _, ok := spell(k); !ok {
 				problems = append(problems, fmt.Sprintf("%s: unknown key %q", a.ID, k))
 				continue
 			}
@@ -190,16 +204,15 @@ func conflicts(byKey map[string]map[string][]ID) []string {
 }
 
 // Lookup returns the action that msg triggers while scope is active: a
-// global action first, then one of scope's. Pasted text never triggers an
-// action, and neither does a key bound to nothing, nor any key in an
-// unknown scope. It doesn't change the map, so it is safe to call from a
-// Bubble Tea View.
-func (m *Map) Lookup(scope string, msg tea.KeyMsg) (ID, bool) {
+// global action first, then one of scope's. A key bound to nothing triggers
+// none, and neither does any key in an unknown scope. It doesn't change the
+// map, so it is safe to call from a Bubble Tea View.
+func (m *Map) Lookup(scope string, msg tea.KeyPressMsg) (ID, bool) {
 	keys, ok := m.bindings[scope]
-	if !ok || msg.Paste {
+	if !ok {
 		return ID{}, false
 	}
-	k := spell(msg.String())
+	k := name(msg.Key())
 	if id, ok := m.bindings[Global][k]; ok {
 		return id, true
 	}
@@ -207,35 +220,17 @@ func (m *Map) Lookup(scope string, msg tea.KeyMsg) (ID, bool) {
 	return id, ok
 }
 
-// Presses splits msg into the key presses it holds. Bubble Tea reports the
-// characters that reach it together as one message, so a key held down, or
-// keys typed fast, can arrive as "jjj": three presses of j. Any other
-// message, pasted text included, is one press.
-func Presses(msg tea.KeyMsg) []tea.KeyMsg {
-	if msg.Type != tea.KeyRunes || msg.Paste || len(msg.Runes) < 2 {
-		return []tea.KeyMsg{msg}
-	}
-	presses := make([]tea.KeyMsg, len(msg.Runes))
-	for i, r := range msg.Runes {
-		presses[i] = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: msg.Alt}
-	}
-	return presses
-}
-
 // Typed returns the text msg types where keys type text, and whether it
-// types any: the characters of a key press or of pasted text, or a space for
-// the space bar. A key pressed with alt types nothing. These are the keys
-// New won't bind where keys type text.
-func Typed(msg tea.KeyMsg) (string, bool) {
-	switch {
-	case msg.Alt:
+// types any: the text of a key pressed with no modifier but shift and the
+// lock keys, a space for the space bar. A key pressed with ctrl, alt, meta,
+// hyper or super types nothing. These are the keys New won't bind where
+// keys type text.
+func Typed(msg tea.KeyPressMsg) (string, bool) {
+	k := msg.Key()
+	if k.Text == "" || k.Mod&^(locks|tea.ModShift) != 0 {
 		return "", false
-	case msg.Type == tea.KeyRunes && len(msg.Runes) > 0:
-		return string(msg.Runes), true
-	case msg.Type == tea.KeySpace:
-		return " ", true
 	}
-	return "", false
+	return k.Text, true
 }
 
 // Keys returns the keys of the action id, first key first, in a new slice:
@@ -246,13 +241,13 @@ func (m *Map) Keys(id ID) []string {
 
 // Label writes the keys of a footer hint: the first key of each of ids that
 // has keys, in order, and "" when none has. Each key splits into its
-// modifiers, the leading "ctrl+", "alt+" and "shift+", and its base, with an
-// arrow drawn as ↑, ↓, ← or →. When all the keys have the same modifiers,
-// those are written once, then the bases: run together when there are no
-// modifiers and every base is an arrow ("↑↓"), joined with "/" otherwise
-// ("k/j", "ctrl+pgup/pgdown", "alt+←/→"). Otherwise each key is written in
-// full and joined with ", " ("ctrl+pgup, pgdown"), so the label never shows
-// a shared modifier the keys don't have.
+// modifiers, the leading "ctrl+", "alt+", "shift+", "meta+", "hyper+" and
+// "super+", and its base, with an arrow drawn as ↑, ↓, ← or →. When all the
+// keys have the same modifiers, those are written once, then the bases: run
+// together when there are no modifiers and every base is an arrow ("↑↓"),
+// joined with "/" otherwise ("k/j", "ctrl+pgup/pgdown", "alt+←/→"). Otherwise
+// each key is written in full and joined with ", " ("ctrl+pgup, pgdown"), so
+// the label never shows a shared modifier the keys don't have.
 func (m *Map) Label(ids ...ID) string {
 	var mods, bases []string
 	allArrows := true
@@ -283,9 +278,6 @@ func (m *Map) Label(ids ...ID) string {
 	return mods[0] + strings.Join(bases, "/")
 }
 
-// modifiers are the prefixes a key's name can start with.
-var modifiers = []string{"ctrl+", "alt+", "shift+"}
-
 // arrows draws the bases of the arrow keys.
 var arrows = map[string]string{"up": "↑", "down": "↓", "left": "←", "right": "→"}
 
@@ -295,68 +287,182 @@ var arrows = map[string]string{"up": "↑", "down": "↓", "left": "←", "right
 func split(key string) (mods, base string) {
 	base = key
 	for {
-		i := strings.IndexByte(base, '+') + 1
-		if i == 0 || i == len(base) || !slices.Contains(modifiers, base[:i]) {
+		_, rest, ok := cutModifier(base)
+		if !ok {
 			return key[:len(key)-len(base)], base
 		}
-		base = base[i:]
+		base = rest
 	}
 }
 
-// named holds the names Bubble Tea gives its key types, in the config's
-// spelling. It asks Bubble Tea to name every key type, from KeyF20, the
-// lowest, to KeyBackspace, the highest, so it follows Bubble Tea's own
-// table; the types that have no name, KeyRunes among them, name themselves
-// "".
-var named = func() map[string]bool {
-	names := map[string]bool{}
-	for t := tea.KeyF20; t <= tea.KeyBackspace; t++ {
-		if name := (tea.Key{Type: t}).String(); name != "" {
-			names[spell(name)] = true
+// locks are the lock keys, which a key's name leaves out: caps lock, num
+// lock and scroll lock change the text a key types, not the key.
+const locks = tea.ModCapsLock | tea.ModNumLock | tea.ModScrollLock
+
+// name is the name of the key k: the text it types, when it types any but a
+// space with no modifier held but shift; otherwise its modifiers, in the
+// order Bubble Tea writes them, then its key, Bubble Tea's name for it or
+// its character. A key gets the same name however the terminal encodes it:
+//
+//   - With ctrl, a letter of a script other than Latin is named by the key it
+//     is on in the PC-101 layout, which the kitty keyboard protocol reports
+//     beside it when asked for alternate keys: ctrl+й, on the Q key, is
+//     ctrl+q, the control byte a legacy terminal sends for it. Other
+//     letters keep their own name, ctrl+ñ and ctrl+a on any layout.
+//   - A sign typed with shift is named by that sign, without shift: alt+? is
+//     alt+?, which the kitty protocol reports as / with shift and the
+//     shifted ?, and xterm as ? with shift.
+//   - A capital letter is written small: xterm reports ctrl+shift+z as a
+//     capital Z with shift, the kitty protocol as a small z with shift, and
+//     caps lock and ctrl+z as a capital Z with ctrl alone, which is ctrl+z.
+//     Bubble Tea puts a shift that was held in the modifiers, but for a
+//     capital that isn't ASCII, as ESC Ñ, which gets its shift here.
+func name(k tea.Key) string {
+	mod := k.Mod &^ locks
+	if k.Text != "" && k.Text != " " && mod&^tea.ModShift == 0 {
+		return k.Text
+	}
+	code := k.Code
+	if mod&tea.ModCtrl != 0 && foreign(code) && k.BaseCode > ' ' && k.BaseCode < utf8.RuneSelf {
+		code = k.BaseCode
+	}
+	if mod&tea.ModShift != 0 && caseless(code) {
+		if k.ShiftedCode != 0 {
+			code = k.ShiftedCode
+		}
+		mod &^= tea.ModShift
+	}
+	if unicode.IsUpper(code) {
+		if code >= utf8.RuneSelf {
+			mod |= tea.ModShift
+		}
+		code = unicode.ToLower(code)
+	}
+	return tea.Key{Code: code, Mod: mod}.Keystroke()
+}
+
+// foreign reports whether r is a letter of a script other than Latin, such
+// as Cyrillic or Greek.
+func foreign(r rune) bool { return unicode.IsLetter(r) && !unicode.Is(unicode.Latin, r) }
+
+// caseless reports whether r is a printable character other than the space
+// that has neither a capital nor a small form, as a digit or a sign has.
+func caseless(r rune) bool {
+	return r != ' ' && unicode.IsPrint(r) && unicode.ToUpper(r) == r && unicode.ToLower(r) == r
+}
+
+// spell returns key, a key as the config writes it, in the spelling name
+// gives the key press it stands for, and whether it is a key at all: any of
+// the modifiers, each once, then the name of a special key or a single
+// character other than a control character. A capital letter after a
+// modifier is shift and the small letter. " " is the space bar, and so is
+// "@" after ctrl: Bubble Tea v1 named ctrl+space by the ctrl+@ most
+// terminals send for it. Shift alone before a character is no key: the
+// character it types is; nor is shift before a sign with other modifiers:
+// the sign shift types is the key, alt+? rather than alt+shift+/.
+func spell(key string) (string, bool) {
+	var mod tea.KeyMod
+	base := key
+	for {
+		m, rest, ok := cutModifier(base)
+		if !ok {
+			break
+		}
+		if mod&m != 0 {
+			return "", false
+		}
+		mod, base = mod|m, rest
+	}
+	if base == " " || base == "@" && mod&tea.ModCtrl != 0 {
+		base = "space"
+	}
+	code, special := specials[base]
+	if !special {
+		r, size := utf8.DecodeRuneInString(base)
+		if size == 0 || size != len(base) || r == utf8.RuneError || unicode.IsControl(r) || mod == tea.ModShift ||
+			mod&tea.ModShift != 0 && caseless(r) {
+			return "", false
+		}
+		if mod == 0 {
+			return base, true
+		}
+		if unicode.IsUpper(r) {
+			r, mod = unicode.ToLower(r), mod|tea.ModShift
+		}
+		code = r
+	}
+	return name(tea.Key{Code: code, Mod: mod}), true
+}
+
+// modifiers are the modifiers a key's name can start with, in the order
+// Bubble Tea writes them.
+var modifiers = []struct {
+	prefix string
+	mod    tea.KeyMod
+}{
+	{"ctrl+", tea.ModCtrl}, {"alt+", tea.ModAlt}, {"shift+", tea.ModShift},
+	{"meta+", tea.ModMeta}, {"hyper+", tea.ModHyper}, {"super+", tea.ModSuper},
+}
+
+// cutModifier cuts the modifier key starts with off key, when it starts with
+// one and something is left after it.
+func cutModifier(key string) (mod tea.KeyMod, rest string, ok bool) {
+	for _, m := range modifiers {
+		if rest, ok := strings.CutPrefix(key, m.prefix); ok && rest != "" {
+			return m.mod, rest, true
+		}
+	}
+	return 0, key, false
+}
+
+// specials holds the names Bubble Tea gives the keys that aren't characters,
+// with a code for each. It asks Bubble Tea to name each such key — enter,
+// tab, backspace, esc and space, then every key code from KeyUp up to the
+// modifier keys — so it follows Bubble Tea's own table. A key Bubble Tea
+// names as a character, such as a keypad digit, is left out: the character
+// is its name. So are the keys edit never receives: a modifier key or a
+// lock key pressed alone, which only a kitty flag edit doesn't ask for
+// reports, and find and select, which Bubble Tea never decodes. A name two
+// keys share, as enter does with keypad enter, keeps the first code, since
+// Bubble Tea writes both the same.
+var specials = func() map[string]rune {
+	names := map[string]rune{}
+	add := func(c rune) {
+		if n := (tea.Key{Code: c}).Keystroke(); utf8.RuneCountInString(n) > 1 {
+			if _, ok := names[n]; !ok {
+				names[n] = c
+			}
+		}
+	}
+	for _, c := range []rune{tea.KeyEnter, tea.KeyTab, tea.KeyBackspace, tea.KeyEscape, tea.KeySpace} {
+		add(c)
+	}
+	never := []rune{tea.KeyCapsLock, tea.KeyNumLock, tea.KeyScrollLock, tea.KeyFind, tea.KeySelect}
+	for c := tea.KeyUp; c < tea.KeyLeftShift; c++ {
+		if !slices.Contains(never, c) {
+			add(c)
 		}
 	}
 	return names
 }()
 
-// spell turns a key's name as Bubble Tea writes it into the config's
-// spelling, which calls the space bar "space" instead of " ".
-func spell(name string) string {
-	switch name {
-	case " ":
-		return "space"
-	case "alt+ ":
-		return "alt+space"
-	}
-	return name
-}
-
-// clean spells keys the config's way and drops the repeats, keeping the
-// first of each.
+// clean spells keys as spell does and drops the repeats, keeping the first
+// of each. A key that is no key stays as it is written, for New to report.
 func clean(keys []string) []string {
 	var out []string
 	for _, k := range keys {
-		if k = spell(k); !slices.Contains(out, k) {
+		if s, ok := spell(k); ok {
+			k = s
+		}
+		if !slices.Contains(out, k) {
 			out = append(out, k)
 		}
 	}
 	return out
 }
 
-// typesText reports whether key, a valid key name, types text: the space bar
-// or a single character, without alt. No name Bubble Tea gives a key type is
-// a single character, so one character is always a character key.
+// typesText reports whether key, spelled as spell spells it, types text: a
+// single character, or the space bar, with shift or without.
 func typesText(key string) bool {
-	return key == "space" || utf8.RuneCountInString(key) == 1
-}
-
-// valid reports whether Bubble Tea can report key: a name it gives one of
-// its key types, a single character other than a control character, or
-// either of those after "alt+".
-func valid(key string) bool {
-	key = strings.TrimPrefix(key, "alt+")
-	if named[key] {
-		return true
-	}
-	r, size := utf8.DecodeRuneInString(key)
-	return size > 0 && size == len(key) && r != utf8.RuneError && !unicode.IsControl(r)
+	return key == "space" || key == "shift+space" || utf8.RuneCountInString(key) == 1
 }

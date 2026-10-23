@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,12 +13,11 @@ import (
 
 	"github.com/candy-tools/edit/app/tui"
 	"github.com/candy-tools/edit/libs/keymap"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"github.com/charmbracelet/colorprofile"
 )
 
 // stubTUI swaps the TUI launcher for fn for the duration of the test.
-func stubTUI(t *testing.T, fn func(root string, keys *keymap.Map, theme tui.Theme) error) {
+func stubTUI(t *testing.T, fn func(root string, keys *keymap.Map, theme tui.Theme, colors colorprofile.Profile) error) {
 	t.Helper()
 	orig := runTUI
 	runTUI = fn
@@ -62,8 +62,9 @@ func writeFile(t *testing.T, path, text string) {
 
 // started is what the TUI started with.
 type started struct {
-	keys  *keymap.Map
-	theme tui.Theme
+	keys   *keymap.Map
+	theme  tui.Theme
+	colors colorprofile.Profile
 }
 
 // execute runs edit with args, the TUI stubbed, and returns what the TUI
@@ -71,8 +72,8 @@ type started struct {
 func execute(t *testing.T, args ...string) (*started, error) {
 	t.Helper()
 	var s *started
-	stubTUI(t, func(_ string, keys *keymap.Map, theme tui.Theme) error {
-		s = &started{keys: keys, theme: theme}
+	stubTUI(t, func(_ string, keys *keymap.Map, theme tui.Theme, colors colorprofile.Profile) error {
+		s = &started{keys: keys, theme: theme, colors: colors}
 		return nil
 	})
 	c := newRootCommand()
@@ -81,13 +82,13 @@ func execute(t *testing.T, args ...string) (*started, error) {
 	return s, err
 }
 
-// terminal makes lipgloss see a terminal of color profile p until the test
-// ends: a test's own output has no colors.
-func terminal(t *testing.T, p termenv.Profile) {
+// terminal makes edit see a terminal of color profile p until the test
+// ends: a test's own output is no terminal.
+func terminal(t *testing.T, p colorprofile.Profile) {
 	t.Helper()
-	old := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(p)
-	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
+	orig := terminalProfile
+	terminalProfile = func() colorprofile.Profile { return p }
+	t.Cleanup(func() { terminalProfile = orig })
 }
 
 // sidebarDown is the action the config tests rebind.
@@ -113,7 +114,7 @@ func TestRootMeta(t *testing.T) {
 func TestRootOpensWorkingDir(t *testing.T) {
 	noUserConfig(t)
 	var got string
-	stubTUI(t, func(root string, _ *keymap.Map, _ tui.Theme) error {
+	stubTUI(t, func(root string, _ *keymap.Map, _ tui.Theme, _ colorprofile.Profile) error {
 		got = root
 		return nil
 	})
@@ -134,7 +135,7 @@ func TestRootOpensWorkingDir(t *testing.T) {
 func TestRootReturnsTUIError(t *testing.T) {
 	noUserConfig(t)
 	boom := errors.New("boom")
-	stubTUI(t, func(string, *keymap.Map, tui.Theme) error { return boom })
+	stubTUI(t, func(string, *keymap.Map, tui.Theme, colorprofile.Profile) error { return boom })
 	c := newRootCommand()
 	c.SetArgs([]string{})
 	if err := c.Execute(); !errors.Is(err, boom) {
@@ -143,7 +144,7 @@ func TestRootReturnsTUIError(t *testing.T) {
 }
 
 func TestRootWithoutAConfigFileUsesTheDefaults(t *testing.T) {
-	terminal(t, termenv.ANSI256)
+	terminal(t, colorprofile.ANSI256)
 	noUserConfig(t)
 	s, err := execute(t)
 	if err != nil {
@@ -158,7 +159,7 @@ func TestRootWithoutAConfigFileUsesTheDefaults(t *testing.T) {
 }
 
 func TestRootWithoutAConfigDirectoryUsesTheDefaults(t *testing.T) {
-	terminal(t, termenv.ANSI256)
+	terminal(t, colorprofile.ANSI256)
 	noConfigDir(t)
 	s, err := execute(t)
 	if err != nil {
@@ -173,7 +174,7 @@ func TestRootWithoutAConfigDirectoryUsesTheDefaults(t *testing.T) {
 }
 
 func TestRootReadsTheConfigFile(t *testing.T) {
-	terminal(t, termenv.ANSI256)
+	terminal(t, colorprofile.ANSI256)
 	writeFile(t, noUserConfig(t), "shortcuts:\n  sidebar:\n    down: [j, down]\ntheme: dracula\n")
 	s, err := execute(t)
 	if err != nil {
@@ -188,16 +189,66 @@ func TestRootReadsTheConfigFile(t *testing.T) {
 }
 
 // Review focus: on a terminal without colors, or with NO_COLOR set, edit
-// draws no colors whatever the config file says.
+// draws no colors whatever the config file says; nor when its output is no
+// terminal, or TERM is dumb.
 func TestRootWithoutColorsUsesTheThemeNone(t *testing.T) {
-	terminal(t, termenv.Ascii)
-	writeFile(t, noUserConfig(t), "theme: dracula\n")
-	s, err := execute(t)
-	if err != nil {
-		t.Fatal(err)
+	for _, p := range []colorprofile.Profile{colorprofile.ASCII, colorprofile.NoTTY} {
+		terminal(t, p)
+		writeFile(t, noUserConfig(t), "theme: dracula\n")
+		s, err := execute(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.theme.Name(); got != "none" {
+			t.Errorf("%v: theme %q, want none on a terminal without colors", p, got)
+		}
 	}
-	if got := s.theme.Name(); got != "none" {
-		t.Errorf("theme %q, want none on a terminal without colors", got)
+}
+
+// Review focus: the TUI draws on the colors the theme was picked for, so the
+// renderer and the theme never disagree.
+func TestTheTUIRunsOnTheColorsTheThemeWasPickedFor(t *testing.T) {
+	for _, p := range []colorprofile.Profile{colorprofile.ANSI256, colorprofile.ASCII} {
+		terminal(t, p)
+		noUserConfig(t)
+		s, err := execute(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.colors != p {
+			t.Errorf("on a %v terminal the TUI runs on %v", p, s.colors)
+		}
+	}
+}
+
+// Review focus: colors are read as Bubble Tea v1 read them — no colors with
+// NO_COLOR set to anything, or CLICOLOR=0 — and a real terminal whose TERM
+// is dumb or unset still shows text attributes, the cursor's reverse video
+// among them.
+func TestColorsAreReadAsV1ReadThem(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		env  []string
+		tty  bool
+		want colorprofile.Profile
+	}{
+		{"a 256-color terminal", []string{"TERM=xterm-256color"}, true, colorprofile.ANSI256},
+		{"NO_COLOR=1", []string{"TERM=xterm-256color", "NO_COLOR=1"}, true, colorprofile.ASCII},
+		{"NO_COLOR set to anything", []string{"TERM=xterm-256color", "NO_COLOR=yes"}, true, colorprofile.ASCII},
+		{"CLICOLOR=0", []string{"TERM=xterm-256color", "CLICOLOR=0"}, true, colorprofile.ASCII},
+		{"CLICOLOR=0, but forced", []string{"TERM=xterm-256color", "CLICOLOR=0", "CLICOLOR_FORCE=1"}, true, colorprofile.ANSI256},
+		{"TERM=dumb on a terminal", []string{"TERM=dumb"}, true, colorprofile.ASCII},
+		{"no TERM on a terminal", nil, true, colorprofile.ASCII},
+		{"no terminal", []string{"TERM=xterm-256color"}, false, colorprofile.NoTTY},
+		{"no terminal, NO_COLOR set", []string{"TERM=xterm-256color", "NO_COLOR=yes"}, false, colorprofile.NoTTY},
+	} {
+		env := c.env
+		if c.tty {
+			env = append(slices.Clone(env), "TTY_FORCE=1") // colorprofile's way to see a terminal in a test
+		}
+		if got := colorsOf(io.Discard, env, c.tty); got != c.want {
+			t.Errorf("%s: colors %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 

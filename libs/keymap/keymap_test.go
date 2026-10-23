@@ -1,13 +1,16 @@
 package keymap
 
 import (
+	"context"
 	"fmt"
-	"reflect"
+	"io"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // overrides is the shape of New's overrides: scope → action name → keys.
@@ -59,11 +62,16 @@ func problems(o overrides) string {
 	return ""
 }
 
-// press is the message Bubble Tea sends for a key of type t.
-func press(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
+// press is the message Bubble Tea sends for the key with code c, modifiers
+// mod held.
+func press(c rune, mod tea.KeyMod) tea.KeyPressMsg { return tea.KeyPressMsg{Code: c, Mod: mod} }
 
-// typed is the message Bubble Tea sends for typing s.
-func typed(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+// typed is the message Bubble Tea sends for typing the small letter, digit
+// or sign s.
+func typed(s string) tea.KeyPressMsg {
+	r, _ := utf8.DecodeRuneInString(s)
+	return tea.KeyPressMsg{Code: r, Text: s}
+}
 
 func TestIDString(t *testing.T) {
 	if got, want := listDown.String(), "list.down"; got != want {
@@ -98,7 +106,7 @@ func TestAnEmptyListUnbindsAnAction(t *testing.T) {
 	if got := m.Keys(listDown); got != nil {
 		t.Errorf("list.down: keys %q, want nil", got)
 	}
-	if _, ok := m.Lookup("view", press(tea.KeyDown)); ok {
+	if _, ok := m.Lookup("view", press(tea.KeyDown, 0)); ok {
 		t.Error("down should trigger nothing once view.down is unbound")
 	}
 }
@@ -112,17 +120,25 @@ func TestAKeyListedTwiceIsKeptOnce(t *testing.T) {
 
 func TestKeyNames(t *testing.T) {
 	for _, k := range []string{
-		"ctrl+w", "pgdown", "ctrl+shift+left", "shift+tab", "f20", "backspace", "ctrl+@", "esc",
-		"j", "J", "?", "ñ", "+", "space",
+		"ctrl+w", "pgdown", "ctrl+shift+left", "shift+tab", "f20", "f63", "backspace", "ctrl+@", "esc",
+		"j", "J", "?", "ñ", "+", "space", "ctrl+space", "shift+space",
 		"alt+x", "alt+J", "alt+right", "alt++", "alt+space", "alt+enter",
+		"ctrl+shift+w", "ctrl+i", "ctrl+m", "ctrl+[", "shift+enter", "super+f5", "meta+x", "hyper+x",
+		"shift+ctrl+z", "ctrl+A", "alt+Ñ", "printscreen", "menu", "mediaplay", "begin",
+		"alt+?", "ctrl+!", "alt+<",
 	} {
 		if p := problems(overrides{"list": {"open": {k}}}); p != "" {
 			t.Errorf("%q should be a key: %s", k, p)
 		}
 	}
 	for _, k := range []string{
-		"ctrl+shift+w", "Ctrl+W", "shift+j", "ctrl+i", "ctrl+m", "ctrl+[", "jk", "",
-		"\x01", "\x7f", "\xff", "runes", "alt+", "alt+alt+x", "alt+jk",
+		"Ctrl+W", "shift+j", "shift+J", "Enter", "F5", "jk", "",
+		"\x01", "\x7f", "\xff", "runes", "alt+", "alt+alt+x", "ctrl+shift+ctrl+x", "alt+jk",
+		// keys edit never receives: a modifier key alone, a lock key, keys
+		// Bubble Tea never decodes
+		"leftshift", "ctrl+rightalt", "isolevel3shift", "capslock", "numlock", "scrolllock", "find", "select",
+		// shift before a sign: the sign shift types is the key
+		"alt+shift+/", "ctrl+shift+1",
 	} {
 		if p, want := problems(overrides{"list": {"open": {k}}}), fmt.Sprintf("list.open: unknown key %q", k); p != want {
 			t.Errorf("%q: problems %q, want %q", k, p, want)
@@ -137,6 +153,27 @@ func TestTheSpaceBarIsSpelledSpace(t *testing.T) {
 	}
 	if got := m.Keys(listDown); !slices.Equal(got, []string{"alt+space"}) {
 		t.Errorf("list.down: keys %q, want alt+space", got)
+	}
+}
+
+// Review focus: a key is kept as Bubble Tea names the key press, however the
+// config spells it, so configs written for v1 keep working.
+func TestKeysAreSpelledAsBubbleTeaNamesThem(t *testing.T) {
+	for in, want := range map[string]string{
+		"shift+ctrl+z": "ctrl+shift+z", // Bubble Tea's order
+		"ctrl+A":       "ctrl+shift+a", // a capital is shift and the small letter
+		"alt+J":        "alt+shift+j",  // v1's alt+J
+		"super+alt+f5": "alt+super+f5",
+		"alt+ ":        "alt+space",
+		"ctrl+@":       "ctrl+space", // v1's name for what most terminals send for ctrl+space
+		"alt+ctrl+@":   "ctrl+alt+space",
+		"alt+Ñ":        "alt+shift+ñ",
+		"J":            "J", // a capital alone is the character it types
+	} {
+		m := build(t, overrides{"list": {"open": {in}}})
+		if got := m.Keys(listOpen); !slices.Equal(got, []string{want}) {
+			t.Errorf("%q: keys %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -180,6 +217,8 @@ func TestNewReportsKeysBoundTwice(t *testing.T) {
 			"key \"x\" is bound to both list.down and list.open\nkey \"x\" is bound to both list.down and list.up"},
 		{"an override against another action's default", overrides{Global: {"next": {"enter"}}},
 			`key "enter" is bound to both global.next and list.open`},
+		{"two spellings of one key", overrides{"list": {"up": {"shift+ctrl+z"}, "down": {"ctrl+shift+z"}}},
+			`key "ctrl+shift+z" is bound to both list.down and list.up`},
 	} {
 		if got := problems(c.o); got != c.want {
 			t.Errorf("%s: problems =\n%s\nwant\n%s", c.name, got, c.want)
@@ -244,21 +283,20 @@ func TestLookup(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		scope string
-		msg   tea.KeyMsg
+		msg   tea.KeyPressMsg
 		want  ID // the zero ID for none
 	}{
-		{"a global key in the list", "list", press(tea.KeyCtrlQ), quit},
-		{"a global key in the view", "view", press(tea.KeyCtrlC), quit},
-		{"a global key in the global scope", Global, press(tea.KeyCtrlPgDown), next},
-		{"the list's key", "list", press(tea.KeyDown), listDown},
-		{"the same key in the view", "view", press(tea.KeyDown), viewDown},
+		{"a global key in the list", "list", press('q', tea.ModCtrl), quit},
+		{"a global key in the view", "view", press('c', tea.ModCtrl), quit},
+		{"a global key in the global scope", Global, press(tea.KeyPgDown, tea.ModCtrl), next},
+		{"the list's key", "list", press(tea.KeyDown, 0), listDown},
+		{"the same key in the view", "view", press(tea.KeyDown, 0), viewDown},
 		{"a letter", "view", typed("j"), viewDown},
 		{"another pane's key", "list", typed("j"), ID{}},
-		{"a pane's key in the global scope", Global, press(tea.KeyDown), ID{}},
-		{"a key bound to nothing", "list", press(tea.KeyF5), ID{}},
-		{"several letters at once", "view", typed("jj"), ID{}},
-		{"an unknown scope", "nope", press(tea.KeyCtrlQ), ID{}},
-		{"pasted text", "view", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j"), Paste: true}, ID{}},
+		{"a pane's key in the global scope", Global, press(tea.KeyDown, 0), ID{}},
+		{"a key bound to nothing", "list", press(tea.KeyF5, 0), ID{}},
+		{"a key press of several characters", "view", tea.KeyPressMsg{Code: tea.KeyExtended, Text: "jj"}, ID{}},
+		{"an unknown scope", "nope", press('q', tea.ModCtrl), ID{}},
 	} {
 		id, ok := m.Lookup(c.scope, c.msg)
 		if id != c.want || ok != (c.want != ID{}) {
@@ -271,16 +309,15 @@ func TestLookupSpaceAndAlt(t *testing.T) {
 	m := build(t, overrides{"list": {"open": {"space"}, "up": {"alt+up", "alt+k"}, "down": {"alt+space"}}})
 	for _, c := range []struct {
 		name string
-		msg  tea.KeyMsg
+		msg  tea.KeyPressMsg
 		want ID // the zero ID for none
 	}{
-		{"the space bar", press(tea.KeySpace), listOpen},
-		{"a typed space", typed(" "), listOpen},
-		{"alt and an arrow", tea.KeyMsg{Type: tea.KeyUp, Alt: true}, listUp},
-		{"alt and a letter", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k"), Alt: true}, listUp},
-		{"alt and the space bar", tea.KeyMsg{Type: tea.KeySpace, Alt: true}, listDown},
+		{"the space bar", typed(" "), listOpen},
+		{"alt and an arrow", press(tea.KeyUp, tea.ModAlt), listUp},
+		{"alt and a letter", press('k', tea.ModAlt), listUp},
+		{"alt and the space bar", press(tea.KeySpace, tea.ModAlt), listDown},
 		{"the letter without alt", typed("k"), ID{}},
-		{"the arrow without alt", press(tea.KeyUp), ID{}},
+		{"the arrow without alt", press(tea.KeyUp, 0), ID{}},
 	} {
 		id, ok := m.Lookup("list", c.msg)
 		if id != c.want || ok != (c.want != ID{}) {
@@ -289,22 +326,135 @@ func TestLookupSpaceAndAlt(t *testing.T) {
 	}
 }
 
-// Review focus: a key held down reaches Bubble Tea faster than it reads, so
-// its repeats arrive as one message; each must count as a press.
-func TestPresses(t *testing.T) {
-	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jj"), Paste: true}
+// Review focus: a key matches its binding however the terminal encodes it.
+func TestLookupMatchesEveryEncoding(t *testing.T) {
+	m := build(t, overrides{"list": {"up": {"ctrl+shift+z"}, "down": {"alt+shift+a"}, "open": {"ctrl+z"}}})
 	for _, c := range []struct {
 		name string
-		msg  tea.KeyMsg
-		want []tea.KeyMsg
+		msg  tea.KeyPressMsg
+		want ID
 	}{
-		{"typed runes", typed("jjk"), []tea.KeyMsg{typed("j"), typed("j"), typed("k")}},
-		{"one typed rune", typed("j"), []tea.KeyMsg{typed("j")}},
-		{"a named key", press(tea.KeyDown), []tea.KeyMsg{press(tea.KeyDown)}},
-		{"pasted text", paste, []tea.KeyMsg{paste}},
+		{"ctrl+shift+z, the kitty protocol", press('z', tea.ModCtrl|tea.ModShift), listUp},
+		{"ctrl+shift+z, xterm", press('Z', tea.ModCtrl|tea.ModShift), listUp},
+		{"ctrl+z with caps lock, xterm", press('Z', tea.ModCtrl), listOpen},
+		{"ctrl+z on a Russian layout, the kitty protocol", tea.KeyPressMsg{Code: 'я', BaseCode: 'z', Mod: tea.ModCtrl}, listOpen},
+		{"alt+A, ESC A", tea.KeyPressMsg{Code: 'a', ShiftedCode: 'A', Mod: tea.ModAlt | tea.ModShift}, listDown},
+		{"ctrl+z with caps lock", press('z', tea.ModCtrl|tea.ModCapsLock), listOpen},
+		{"ctrl+z with num lock", press('z', tea.ModCtrl|tea.ModNumLock), listOpen},
 	} {
-		if got := Presses(c.msg); !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s: Presses = %q, want %q", c.name, got, c.want)
+		if id, _ := m.Lookup("list", c.msg); id != c.want {
+			t.Errorf("%s: Lookup = %v, want %v", c.name, id, c.want)
+		}
+	}
+}
+
+func TestNames(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		key  tea.Key
+		want string
+	}{
+		{"ctrl+z, a control byte", tea.Key{Code: 'z', Mod: tea.ModCtrl}, "ctrl+z"},
+		{"ctrl+shift+z, the kitty protocol", tea.Key{Code: 'z', Mod: tea.ModCtrl | tea.ModShift}, "ctrl+shift+z"},
+		{"ctrl+shift+z, xterm", tea.Key{Code: 'Z', Mod: tea.ModCtrl | tea.ModShift}, "ctrl+shift+z"},
+		{"ctrl+z with caps lock, xterm", tea.Key{Code: 'Z', Mod: tea.ModCtrl}, "ctrl+z"},
+		{"alt+A, ESC A", tea.Key{Code: 'a', ShiftedCode: 'A', Mod: tea.ModAlt | tea.ModShift}, "alt+shift+a"},
+		{"alt+Ñ, ESC Ñ", tea.Key{Code: 'Ñ', Mod: tea.ModAlt}, "alt+shift+ñ"},
+		{"alt+?, ESC ?", tea.Key{Code: '?', Mod: tea.ModAlt}, "alt+?"},
+		{"alt+?, xterm", tea.Key{Code: '?', Mod: tea.ModAlt | tea.ModShift}, "alt+?"},
+		{"alt+?, the kitty protocol", tea.Key{Code: '/', ShiftedCode: '?', Mod: tea.ModAlt | tea.ModShift}, "alt+?"},
+		{"ctrl+shift+1, the kitty protocol", tea.Key{Code: '1', ShiftedCode: '!', Mod: tea.ModCtrl | tea.ModShift}, "ctrl+!"},
+		{"ctrl+q on a Russian layout, the kitty protocol", tea.Key{Code: 'й', BaseCode: 'q', Mod: tea.ModCtrl}, "ctrl+q"},
+		{"ctrl+shift+q on a Russian layout", tea.Key{Code: 'й', ShiftedCode: 'q', BaseCode: 'q', Mod: tea.ModCtrl | tea.ModShift}, "ctrl+shift+q"},
+		{"ctrl+ñ on a Spanish layout, a Latin letter", tea.Key{Code: 'ñ', BaseCode: ';', Mod: tea.ModCtrl}, "ctrl+ñ"},
+		{"alt+й on a Russian layout, as ESC й sends it", tea.Key{Code: 'й', BaseCode: 'q', Mod: tea.ModAlt}, "alt+й"},
+		{"й typed", tea.Key{Code: 'й', BaseCode: 'q', Text: "й"}, "й"},
+		{"J typed", tea.Key{Code: 'j', ShiftedCode: 'J', Mod: tea.ModShift, Text: "J"}, "J"},
+		{"A with caps lock", tea.Key{Code: 'a', Mod: tea.ModCapsLock, Text: "A"}, "A"},
+		{"ñ typed", tea.Key{Code: 'ñ', Text: "ñ"}, "ñ"},
+		{"a cluster an input method typed", tea.Key{Code: tea.KeyExtended, Text: "👍🏽"}, "👍🏽"},
+		{"the space bar", tea.Key{Code: tea.KeySpace, Text: " "}, "space"},
+		{"shift and the space bar", tea.Key{Code: tea.KeySpace, Mod: tea.ModShift, Text: " "}, "shift+space"},
+		{"shift+tab", tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}, "shift+tab"},
+		{"keypad enter", tea.Key{Code: tea.KeyKpEnter}, "enter"},
+		{"ctrl+z with caps lock", tea.Key{Code: 'z', Mod: tea.ModCtrl | tea.ModCapsLock}, "ctrl+z"},
+		{"super+f5", tea.Key{Code: tea.KeyF5, Mod: tea.ModSuper}, "super+f5"},
+	} {
+		if got := name(c.key); got != c.want {
+			t.Errorf("%s: name = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// recorder is a Bubble Tea program that keeps the key presses it gets, and
+// quits once it has want of them.
+type recorder struct {
+	want int
+	keys []tea.Key
+}
+
+func (r recorder) Init() tea.Cmd { return nil }
+
+func (r recorder) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		r.keys = append(r.keys, k.Key())
+		if len(r.keys) == r.want {
+			return r, tea.Quit
+		}
+	}
+	return r, nil
+}
+
+func (r recorder) View() tea.View { return tea.NewView("") }
+
+// decode runs a real Bubble Tea program on input, as a terminal sends it,
+// and returns the names of the first n key presses it decodes.
+func decode(t *testing.T, input string, n int) []string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	p := tea.NewProgram(recorder{want: n}, tea.WithContext(ctx), tea.WithInput(strings.NewReader(input)),
+		tea.WithOutput(io.Discard), tea.WithoutSignalHandler(), tea.WithWindowSize(80, 24))
+	final, err := p.Run()
+	if err != nil {
+		t.Fatalf("a program on %q: %v", input, err)
+	}
+	var names []string
+	for _, k := range final.(recorder).keys {
+		names = append(names, name(k))
+	}
+	return names
+}
+
+// Review focus: the names follow what Bubble Tea's own decoder makes of each
+// encoding, so an upgrade that changes it fails here rather than at a key.
+func TestTheDecoderAgreesWithTheNames(t *testing.T) {
+	for _, c := range []struct{ name, input, want string }{
+		{"ctrl+z, a control byte", "\x1a", "ctrl+z"},
+		{"ctrl+shift+z, the kitty protocol", "\x1b[122;6u", "ctrl+shift+z"},
+		{"ctrl+shift+z, xterm's modifyOtherKeys", "\x1b[27;6;90~", "ctrl+shift+z"},
+		{"ctrl+z with caps lock, the kitty protocol", "\x1b[122;69u", "ctrl+z"},
+		{"ctrl+z with num lock, the kitty protocol", "\x1b[122;133u", "ctrl+z"},
+		{"ctrl+z with caps lock, xterm's modifyOtherKeys", "\x1b[27;5;90~", "ctrl+z"},
+		{"alt+A, ESC A", "\x1bA", "alt+shift+a"},
+		{"alt+Ñ, ESC Ñ", "\x1bÑ", "alt+shift+ñ"},
+		{"J", "J", "J"},
+		{"the space bar", " ", "space"},
+		{"shift+tab", "\x1b[Z", "shift+tab"},
+		{"keypad enter, the kitty protocol", "\x1b[57414u", "enter"},
+		{"ctrl+c, a control byte", "\x03", "ctrl+c"},
+		{"ctrl+pgdown", "\x1b[6;5~", "ctrl+pgdown"},
+		{"alt+right", "\x1b[1;3C", "alt+right"},
+		{"ctrl+shift+left", "\x1b[1;6D", "ctrl+shift+left"},
+		{"shift+enter, the kitty protocol", "\x1b[13;2u", "shift+enter"},
+		{"f5", "\x1b[15~", "f5"},
+		{"alt+?, ESC ?", "\x1b?", "alt+?"},
+		{"alt+?, xterm's modifyOtherKeys", "\x1b[27;4;63~", "alt+?"},
+		{"alt+?, the kitty protocol with alternate keys", "\x1b[47:63;4u", "alt+?"},
+		{"ctrl+q on a Russian layout, the kitty protocol with alternate keys", "\x1b[1081::113;5u", "ctrl+q"},
+	} {
+		if got := decode(t, c.input, 1); !slices.Equal(got, []string{c.want}) {
+			t.Errorf("%s: %q decodes as %q, want %q", c.name, c.input, got, c.want)
 		}
 	}
 }
@@ -335,6 +485,8 @@ func TestLabel(t *testing.T) {
 			[]ID{prev, next}, "alt+←/→"},
 		{"two shared modifiers", overrides{"list": {"up": {"ctrl+shift+up"}, "down": {"ctrl+shift+down"}}},
 			[]ID{listUp, listDown}, "ctrl+shift+↑/↓"},
+		{"meta, hyper and super", overrides{"list": {"up": {"super+up"}, "down": {"super+down"}}},
+			[]ID{listUp, listDown}, "super+↑/↓"},
 		{"letters are joined with /", overrides{"view": {"up": {"k"}, "down": {"j"}}},
 			[]ID{viewUp, viewDown}, "k/j"},
 		{"an arrow and a letter", overrides{"view": {"down": {"j"}}}, []ID{viewUp, viewDown}, "↑/j"},
@@ -386,11 +538,13 @@ func TestKeysThatTypeTextInATypingScope(t *testing.T) {
 		{"a letter with an accent", cleanView("ñ"), `view.down: key "ñ" types text`},
 		{"a digit", cleanView("1"), `view.down: key "1" types text`},
 		{"the space bar", cleanView(" ", "space"), `view.down: key "space" types text`},
+		{"shift and the space bar", cleanView("shift+space"), `view.down: key "shift+space" types text`},
 		{"a letter in the global scope", overrides{"view": cleanView("down")["view"], Global: {"next": {"x"}}},
 			`global.next: key "x" types text`},
 		{"alt and a letter", cleanView("alt+j"), ""},
 		{"alt and the space bar", cleanView("alt+space"), ""},
 		{"a control key", cleanView("ctrl+k"), ""},
+		{"ctrl and shift and a letter", cleanView("ctrl+shift+z"), ""},
 		{"named keys", cleanView("enter", "f5", "tab", "backspace"), ""},
 		{"a letter in another pane", overrides{"view": cleanView("down")["view"], "list": {"down": {"j"}}}, ""},
 		{"an unknown key is only unknown", cleanView("ctrl+uo"), `view.down: unknown key "ctrl+uo"`},
@@ -421,20 +575,22 @@ func TestATypingScopeMustHaveActions(t *testing.T) {
 func TestTyped(t *testing.T) {
 	for _, c := range []struct {
 		name string
-		msg  tea.KeyMsg
+		msg  tea.KeyPressMsg
 		want string // "" when msg types nothing
 	}{
 		{"a letter", typed("j"), "j"},
-		{"several letters", typed("jk"), "jk"},
-		{"pasted text", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a\r\nb"), Paste: true}, "a\r\nb"},
-		{"the space bar", press(tea.KeySpace), " "},
-		{"a typed space", typed(" "), " "},
-		{"alt and a letter", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j"), Alt: true}, ""},
-		{"alt and the space bar", tea.KeyMsg{Type: tea.KeySpace, Alt: true}, ""},
-		{"enter", press(tea.KeyEnter), ""},
-		{"tab", press(tea.KeyTab), ""},
-		{"a control key", press(tea.KeyCtrlK), ""},
-		{"no runes", tea.KeyMsg{Type: tea.KeyRunes}, ""},
+		{"a capital", tea.KeyPressMsg{Code: 'j', ShiftedCode: 'J', Mod: tea.ModShift, Text: "J"}, "J"},
+		{"a capital with caps lock", tea.KeyPressMsg{Code: 'j', Mod: tea.ModCapsLock, Text: "J"}, "J"},
+		{"a cluster an input method typed", tea.KeyPressMsg{Code: tea.KeyExtended, Text: "👍🏽"}, "👍🏽"},
+		{"the space bar", typed(" "), " "},
+		{"shift and the space bar", tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModShift, Text: " "}, " "},
+		{"alt and a letter", press('j', tea.ModAlt), ""},
+		{"alt and the space bar", press(tea.KeySpace, tea.ModAlt), ""},
+		{"ctrl and shift and a letter", press('z', tea.ModCtrl|tea.ModShift), ""},
+		{"enter", press(tea.KeyEnter, 0), ""},
+		{"tab", press(tea.KeyTab, 0), ""},
+		{"a control key", press('k', tea.ModCtrl), ""},
+		{"a key with no text", press(tea.KeyF1, 0), ""},
 	} {
 		text, ok := Typed(c.msg)
 		if text != c.want || ok != (c.want != "") {

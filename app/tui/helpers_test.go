@@ -4,21 +4,12 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"unicode"
+	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/candy-tools/edit/libs/keymap"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 )
-
-// colors makes lipgloss draw 256 colors until the test ends, as it does on
-// most terminals: a test's output is no terminal, so it draws none there.
-func colors(t *testing.T) {
-	t.Helper()
-	old := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
-}
 
 // testFS is the workspace the model tests open: a folder and two files.
 var testFS = fstest.MapFS{
@@ -86,65 +77,87 @@ func send(m model, msg tea.Msg) model {
 	return nm.(model)
 }
 
-// press sends keystrokes by name ("tab", "ctrl+q", "alt+right", …); anything
-// else is typed as runes.
+// press sends keystrokes by name ("tab", "ctrl+q", "alt+right", "G", …);
+// anything else is typed, one key press per character, as Bubble Tea sends
+// typed text.
 func press(m model, keys ...string) model {
 	for _, k := range keys {
-		m = send(m, keyMsg(k))
+		if isKeyName(k) {
+			m = send(m, keyMsg(k))
+			continue
+		}
+		for _, r := range k {
+			m = send(m, keyMsg(string(r)))
+		}
 	}
 	return m
 }
 
-// namedKeys are the keys keyMsg knows by name.
-var namedKeys = map[string]tea.KeyType{
-	"tab":         tea.KeyTab,
-	"shift+tab":   tea.KeyShiftTab,
-	"space":       tea.KeySpace,
-	"ctrl+c":      tea.KeyCtrlC,
-	"ctrl+q":      tea.KeyCtrlQ,
-	"ctrl+x":      tea.KeyCtrlX,
-	"ctrl+h":      tea.KeyCtrlH,
-	"ctrl+k":      tea.KeyCtrlK,
-	"up":          tea.KeyUp,
-	"down":        tea.KeyDown,
-	"left":        tea.KeyLeft,
-	"right":       tea.KeyRight,
-	"enter":       tea.KeyEnter,
-	"backspace":   tea.KeyBackspace,
-	"delete":      tea.KeyDelete,
-	"pgup":        tea.KeyPgUp,
-	"pgdown":      tea.KeyPgDown,
-	"home":        tea.KeyHome,
-	"end":         tea.KeyEnd,
-	"ctrl+home":   tea.KeyCtrlHome,
-	"ctrl+end":    tea.KeyCtrlEnd,
-	"ctrl+pgup":   tea.KeyCtrlPgUp,
-	"ctrl+pgdown": tea.KeyCtrlPgDown,
-	"ctrl+w":      tea.KeyCtrlW,
+// isKeyName reports whether s names one key: one of namedKeys, a single
+// character, or either after modifiers.
+func isKeyName(s string) bool {
+	for _, m := range keyModifiers {
+		if rest, ok := strings.CutPrefix(s, m.prefix); ok && rest != "" {
+			return isKeyName(rest)
+		}
+	}
+	_, named := namedKeys[s]
+	return named || utf8.RuneCountInString(s) == 1
 }
 
-// paste sends text as Bubble Tea sends pasted text: one message, marked as
-// a paste.
+// namedKeys are the keys keyMsg knows by name, by their Bubble Tea codes.
+var namedKeys = map[string]rune{
+	"tab": tea.KeyTab, "space": tea.KeySpace, "enter": tea.KeyEnter, "esc": tea.KeyEscape,
+	"backspace": tea.KeyBackspace, "delete": tea.KeyDelete,
+	"up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight,
+	"pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown, "home": tea.KeyHome, "end": tea.KeyEnd,
+	"f6": tea.KeyF6,
+}
+
+// keyModifiers are the modifiers a key's name in a test can start with.
+var keyModifiers = []struct {
+	prefix string
+	mod    tea.KeyMod
+}{{"ctrl+", tea.ModCtrl}, {"alt+", tea.ModAlt}, {"shift+", tea.ModShift}}
+
+// keyMsg is the message Bubble Tea sends for the key named s: modifiers in
+// front ("ctrl+", "alt+", "shift+"), then one of namedKeys or a character.
+// A character typed with no modifier carries its text, a capital as shift
+// and the small letter, as Bubble Tea decodes them; so does the space bar.
+func keyMsg(s string) tea.KeyPressMsg {
+	var mod tea.KeyMod
+	for cut := true; cut; {
+		cut = false
+		for _, m := range keyModifiers {
+			if rest, ok := strings.CutPrefix(s, m.prefix); ok && rest != "" {
+				s, mod, cut = rest, mod|m.mod, true
+			}
+		}
+	}
+	if code, ok := namedKeys[s]; ok {
+		k := tea.KeyPressMsg{Code: code, Mod: mod}
+		if code == tea.KeySpace && mod == 0 {
+			k.Text = " "
+		}
+		return k
+	}
+	r, _ := utf8.DecodeRuneInString(s)
+	k := tea.KeyPressMsg{Code: r, Mod: mod}
+	if mod == 0 {
+		k.Text = s
+		if unicode.IsUpper(r) {
+			k.Code, k.ShiftedCode, k.Mod = unicode.ToLower(r), r, tea.ModShift
+		}
+	}
+	return k
+}
+
+// paste sends text as Bubble Tea sends pasted text: a message of its own.
 func paste(m model, text string) model {
-	return send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true})
+	return send(m, tea.PasteMsg{Content: text})
 }
 
 // cursor returns the cursor of m's active tab: its line and byte offset.
 func cursor(m model) (line, offset int) {
 	return m.activeDocument().text.Cursor()
-}
-
-// keyMsg is the message Bubble Tea sends for the key named s: one of
-// namedKeys, or s typed as runes, with alt held down when s starts with
-// "alt+".
-func keyMsg(s string) tea.KeyMsg {
-	if rest, ok := strings.CutPrefix(s, "alt+"); ok && rest != "" {
-		msg := keyMsg(rest)
-		msg.Alt = true
-		return msg
-	}
-	if k, ok := namedKeys[s]; ok {
-		return tea.KeyMsg{Type: k}
-	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }

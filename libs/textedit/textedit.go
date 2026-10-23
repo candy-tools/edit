@@ -1,7 +1,7 @@
 // Package textedit is the editing state of one text shown a few lines at a
 // time: its lines, a cursor, the moves and edits a basic text editor makes,
-// and a window over the lines that follows the cursor up, down and
-// sideways. It reads the text the way a terminal draws it, as grapheme
+// and undoing and redoing them, and a window over the lines that follows
+// the cursor up, down and sideways. It reads the text the way a terminal draws it, as grapheme
 // clusters, and hands the caller the window's cells ready to style; it knows
 // nothing about keys, styles or files. It reports what each edit changed, so
 // a caller can keep something in step with the text, such as a syntax tree.
@@ -39,6 +39,7 @@ type Buffer struct {
 
 	version  int          // how many calls changed the text
 	onChange func(Change) // told what each edit changed; nil for nobody
+	history  history      // the edits to undo and redo
 }
 
 // A Position is a place in the text, counted in bytes of the text as String
@@ -74,7 +75,8 @@ type Line struct {
 // and empty text is a single empty line. Tab stops are tabWidth columns
 // apart; a tabWidth below 1 counts as 1.
 func New(text string, tabWidth int) *Buffer {
-	b := &Buffer{eol: "\n", tabWidth: max(tabWidth, 1), goal: -1, width: 1, height: 1}
+	b := &Buffer{eol: "\n", tabWidth: max(tabWidth, 1), goal: -1, width: 1, height: 1,
+		history: history{steps: defaultSteps, size: defaultSize}}
 	if n := strings.Count(text, "\n"); n > 0 && strings.Count(text, "\r\n") == n {
 		b.eol = "\r\n"
 		text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -221,9 +223,10 @@ func (b *Buffer) Bottom() {
 }
 
 // moved ends every move but the vertical ones: it ends a run of vertical
-// moves and moves the window to show the cursor.
+// moves and the open undo step, and moves the window to show the cursor.
 func (b *Buffer) moved() {
 	b.goal = -1
+	b.history.open = false
 	b.follow()
 }
 
@@ -236,6 +239,7 @@ func (b *Buffer) vertical(i int) {
 	}
 	b.line = i
 	b.offset = b.offsetAt(b.lines[i], b.goal)
+	b.history.open = false
 	b.follow()
 }
 
@@ -250,58 +254,54 @@ func (b *Buffer) Insert(text string) {
 		return
 	}
 	text = lineBreaks.Replace(text)
-	parts := strings.Split(text, "\n")
 	line, col := b.line, b.offset
-	s, last := b.lines[b.line], len(parts)-1
-	parts[0] = s[:b.offset] + parts[0]
-	offset := len(parts[last])
-	parts[last] += s[b.offset:]
-	b.lines = slices.Replace(b.lines, b.line, b.line+1, parts...)
-	b.line += last
-	b.offset = offset
+	b.line, b.offset = b.splice(line, col, "", text)
 	b.changed()
-	b.inserted(line, col, len(text)+last*(len(b.eol)-1), line+last, offset)
+	k := alone // pasted text, which Undo takes back whole
+	if size, _, _ := b.cell(text, 0); size == len(text) {
+		k = typing // one cell: a key's character, a tab, a line break, a cluster an input method typed
+	}
+	b.edited(k, line, col, "", text, cursor{line, col})
 }
 
 // DeleteLeft deletes the cell before the cursor or, at the start of a line,
 // joins the line to the end of the line above, the cursor at the join. At
 // the start of the text it does nothing.
 func (b *Buffer) DeleteLeft() {
-	s, line, col := b.lines[b.line], b.line, b.offset
-	switch {
+	var line, col int
+	var from string
+	switch s := b.lines[b.line]; {
 	case b.offset > 0:
-		start := b.before(s, b.offset)
-		b.lines[b.line] = s[:start] + s[b.offset:]
-		b.offset = start
-		b.changed()
-		b.deleted(line, start, col-start, line, col)
+		line, col = b.line, b.before(s, b.offset)
+		from = s[col:b.offset]
 	case b.line > 0:
-		above := b.lines[b.line-1]
-		b.lines[b.line-1] = above + s
-		b.lines = slices.Delete(b.lines, b.line, b.line+1)
-		b.line--
-		b.offset = len(above)
-		b.changed()
-		b.deleted(line-1, len(above), len(b.eol), line, 0)
+		line, col, from = b.line-1, len(b.lines[b.line-1]), "\n"
+	default:
+		return
 	}
+	before := cursor{b.line, b.offset}
+	b.line, b.offset = b.splice(line, col, from, "")
+	b.changed()
+	b.edited(deletingLeft, line, col, from, "", before)
 }
 
 // DeleteRight deletes the cell under the cursor or, at the end of a line,
 // joins the line below to this one. At the end of the text it does nothing.
 func (b *Buffer) DeleteRight() {
-	s, line, col := b.lines[b.line], b.line, b.offset
-	switch {
+	var from string
+	switch s := b.lines[b.line]; {
 	case b.offset < len(s):
 		size, _, _ := b.cell(s[b.offset:], 0)
-		b.lines[b.line] = s[:b.offset] + s[b.offset+size:]
-		b.changed()
-		b.deleted(line, col, size, line, col+size)
+		from = s[b.offset : b.offset+size]
 	case b.line < len(b.lines)-1:
-		b.lines[b.line] = s + b.lines[b.line+1]
-		b.lines = slices.Delete(b.lines, b.line+1, b.line+2)
-		b.changed()
-		b.deleted(line, col, len(b.eol), line+1, 0)
+		from = "\n"
+	default:
+		return
 	}
+	line, col := b.line, b.offset
+	b.splice(line, col, from, "")
+	b.changed()
+	b.edited(deletingRight, line, col, from, "", cursor{line, col})
 }
 
 // DeleteLine deletes the cursor's line and moves the cursor to the line that
@@ -310,49 +310,76 @@ func (b *Buffer) DeleteRight() {
 // empty already, DeleteLine does nothing.
 func (b *Buffer) DeleteLine() {
 	i, s, n := b.line, b.lines[b.line], len(b.lines)
+	var line, col int
+	var from string
 	switch {
-	case n > 1:
-		if b.goal < 0 {
-			b.goal = b.column(s, b.offset)
-		}
-		b.lines = slices.Delete(b.lines, i, i+1)
-		b.line = min(i, len(b.lines)-1)
-		b.offset = b.offsetAt(b.lines[b.line], b.goal)
-	case s != "":
-		b.lines[0], b.offset = "", 0
+	case n > 1 && i < n-1: // the line and the break after it
+		line, col, from = i, 0, s+"\n"
+	case n > 1: // the last of several lines: the break before it and the line
+		line, col, from = i-1, len(b.lines[i-1]), "\n"+s
+	case s != "": // the only line: its bytes
+		line, col, from = 0, 0, s
 	default:
 		return
 	}
+	before := cursor{b.line, b.offset}
+	if n > 1 && b.goal < 0 {
+		b.goal = b.column(s, b.offset)
+	}
+	b.splice(line, col, from, "")
+	if n > 1 {
+		b.line = min(i, len(b.lines)-1)
+		b.offset = b.offsetAt(b.lines[b.line], b.goal)
+	} else {
+		b.offset = 0
+	}
 	b.version++
 	b.follow()
-	switch {
-	case n == 1: // the only line: its bytes
-		b.deleted(0, 0, len(s), 0, len(s))
-	case i < n-1: // the line and the break after it
-		b.deleted(i, 0, len(s)+len(b.eol), i+1, 0)
-	default: // the last of several lines: the break before it and the line
-		b.deleted(i-1, len(b.lines[i-1]), len(b.eol)+len(s), i, len(s))
+	b.edited(alone, line, col, from, "", before)
+}
+
+// splice replaces from, the text at offset col of line i on, with to, in
+// the lines. Both texts have "\n" for a line break and every other byte as
+// it is, so splice changes no byte but those: it never turns a "\r" into a
+// line break. It returns where to ends: its line, and its offset in that
+// line.
+func (b *Buffer) splice(i, col int, from, to string) (line, offset int) {
+	endLine, endCol := span(i, col, from)
+	line, offset = span(i, col, to)
+	parts := strings.Split(to, "\n")
+	last := len(parts) - 1
+	parts[0] = b.lines[i][:col] + parts[0]
+	parts[last] += b.lines[endLine][endCol:]
+	b.lines = slices.Replace(b.lines, i, endLine+1, parts...)
+	return line, offset
+}
+
+// span returns where text, from offset col of line i on, ends: its line,
+// and its offset in that line.
+func span(i, col int, text string) (line, offset int) {
+	n := strings.Count(text, "\n")
+	if n == 0 {
+		return i, col + len(text)
+	}
+	return i + n, len(text) - strings.LastIndexByte(text, '\n') - 1
+}
+
+// report tells the OnChange function, if there is one, that an edit
+// replaced from, the text at offset col of line i on, with to. The lines
+// above line i are as they were.
+func (b *Buffer) report(i, col int, from, to string) {
+	if b.onChange != nil {
+		start := b.position(i, col)
+		b.onChange(Change{Start: start, OldEnd: b.end(start, from), NewEnd: b.end(start, to)})
 	}
 }
 
-// inserted tells the OnChange function, if there is one, that an edit
-// inserted n bytes at column col of line, which now run to column endCol of
-// line endLine. The lines above line are as they were.
-func (b *Buffer) inserted(line, col, n, endLine, endCol int) {
-	if b.onChange != nil {
-		start := b.position(line, col)
-		b.onChange(Change{Start: start, OldEnd: start, NewEnd: Position{start.Offset + n, endLine, endCol}})
-	}
-}
-
-// deleted tells the OnChange function, if there is one, that an edit deleted
-// n bytes from column col of line, which ran to column endCol of line
-// endLine. The lines above line are as they were.
-func (b *Buffer) deleted(line, col, n, endLine, endCol int) {
-	if b.onChange != nil {
-		start := b.position(line, col)
-		b.onChange(Change{Start: start, OldEnd: Position{start.Offset + n, endLine, endCol}, NewEnd: start})
-	}
+// end returns the Position where text, put in at start, ends, counted in
+// the bytes of the text as String writes it, with the line break for each
+// "\n".
+func (b *Buffer) end(start Position, text string) Position {
+	line, col := span(start.Line, start.Column, text)
+	return Position{Offset: start.Offset + len(text) + (line-start.Line)*(len(b.eol)-1), Line: line, Column: col}
 }
 
 // position returns the Position of offset col of line i.

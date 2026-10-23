@@ -5,6 +5,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -13,8 +14,8 @@ import (
 	"github.com/candy-tools/edit/app/metainfo"
 	"github.com/candy-tools/edit/app/tui"
 	"github.com/candy-tools/edit/libs/keymap"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,38 @@ var runTUI = tui.Run
 // --config. It is a package variable so tests can point it at a temporary
 // file, whatever the OS's config directory.
 var defaultConfigPath = config.DefaultPath
+
+// terminalProfile says which colors the terminal edit draws on shows, as
+// colorsOf reads them. It is a package variable so tests can fake a
+// terminal.
+var terminalProfile = func() colorprofile.Profile {
+	return colorsOf(os.Stdout, os.Environ(), term.IsTerminal(os.Stdout.Fd()))
+}
+
+// colorsOf is the color profile of the terminal on out, whose environment is
+// env, as edit reads it: as colorprofile detects it, but without colors
+// when NO_COLOR is set to anything, or CLICOLOR is 0 and CLICOLOR_FORCE
+// isn't set, as termenv read them for Bubble Tea v1; and when tty says out
+// is a terminal, with text attributes but no colors rather than nothing at
+// all on one whose TERM is dumb or unset, so the cursor's reverse video
+// still shows.
+func colorsOf(out io.Writer, env []string, tty bool) colorprofile.Profile {
+	p := colorprofile.Detect(out, env)
+	vars := map[string]string{}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			vars[k] = v
+		}
+	}
+	forced := vars["CLICOLOR_FORCE"] != "" && vars["CLICOLOR_FORCE"] != "0"
+	if p > colorprofile.ASCII && (vars["NO_COLOR"] != "" || vars["CLICOLOR"] == "0" && !forced) {
+		p = colorprofile.ASCII
+	}
+	if p == colorprofile.NoTTY && tty {
+		p = colorprofile.ASCII
+	}
+	return p
+}
 
 // Execute is the entry point for the command line.
 func Execute() {
@@ -47,7 +80,8 @@ func newRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(*cobra.Command, []string) error {
-			keys, theme, err := loadSettings(configPath)
+			colors := terminalProfile()
+			keys, theme, err := loadSettings(configPath, colors)
 			if err != nil {
 				return err
 			}
@@ -55,7 +89,7 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTUI(root, keys, theme)
+			return runTUI(root, keys, theme, colors)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", configUsage())
@@ -79,9 +113,9 @@ func configUsage() string {
 // --config is an error, so a typo in its path can't go unnoticed. Its errors
 // start "config <path>: ", and an invalid keymap's list its problems, one
 // per line, indented. A theme that doesn't exist is an error on any
-// terminal, but on one without colors, as NO_COLOR makes any terminal, the
-// theme is none.
-func loadSettings(path string) (*keymap.Map, tui.Theme, error) {
+// terminal, but on one without colors — colors, the terminal's profile, is
+// ASCII or less, as NO_COLOR makes any terminal — the theme is none.
+func loadSettings(path string, colors colorprofile.Profile) (*keymap.Map, tui.Theme, error) {
 	cfg, path, err := loadConfig(path)
 	if err != nil {
 		return nil, tui.Theme{}, err
@@ -95,7 +129,7 @@ func loadSettings(path string) (*keymap.Map, tui.Theme, error) {
 	if err != nil {
 		return nil, tui.Theme{}, fmt.Errorf("config %s: %w", path, err)
 	}
-	if lipgloss.ColorProfile() == termenv.Ascii {
+	if colors <= colorprofile.ASCII {
 		theme, err = tui.NewTheme("none")
 	}
 	return keys, theme, err

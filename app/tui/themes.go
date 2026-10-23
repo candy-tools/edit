@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/candy-tools/edit/libs/syntax"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // themeNames are the built-in themes, in the order an error lists them.

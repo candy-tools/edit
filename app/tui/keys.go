@@ -42,11 +42,15 @@ var (
 	editorDeleteLeft  = keymap.ID{Scope: scopeEditor, Name: "delete-left"}
 	editorDeleteRight = keymap.ID{Scope: scopeEditor, Name: "delete-right"}
 	editorDeleteLine  = keymap.ID{Scope: scopeEditor, Name: "delete-line"}
+	editorUndo        = keymap.ID{Scope: scopeEditor, Name: "undo"}
+	editorRedo        = keymap.ID{Scope: scopeEditor, Name: "redo"}
 )
 
 // actions are edit's actions with their default keys. quit must keep a key,
 // so the config can't lock you in. ctrl+h deletes left too, since some
-// terminals send it for backspace.
+// terminals send it for backspace. ctrl+shift+z only reaches edit from a
+// terminal that reports it; where it arrives as ctrl+z, it undoes, so redo
+// has ctrl+y too.
 var actions = []keymap.Action{
 	{ID: actQuit, Keys: []string{"ctrl+q", "ctrl+c"}, Required: true},
 	{ID: actSwitchFocus, Keys: []string{"shift+tab"}},
@@ -79,6 +83,8 @@ var actions = []keymap.Action{
 	{ID: editorDeleteLeft, Keys: []string{"backspace", "ctrl+h"}},
 	{ID: editorDeleteRight, Keys: []string{"delete"}},
 	{ID: editorDeleteLine, Keys: []string{"ctrl+k"}},
+	{ID: editorUndo, Keys: []string{"ctrl+z"}},
+	{ID: editorRedo, Keys: []string{"ctrl+shift+z", "ctrl+y"}},
 }
 
 // NewKeymap builds edit's keymap: each action's default keys, except that

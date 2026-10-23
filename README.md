@@ -5,9 +5,10 @@ sidebar on the left and the open files as tabs on the right.
 
 > **Status:** early. The layout is in place — header, file sidebar, tabbed
 > editor pane and key-hint footer. The sidebar browses the workspace as a
-> folder tree and opens files in tabs, where you edit them, colored by their
-> syntax; edits are saved on their own, in the background. Every key can be
-> rebound, and the colors picked, in a config file.
+> folder tree and opens files in tabs, where you edit them, with undo and
+> redo, colored by their syntax; edits are saved on their own, in the
+> background. Every key can be rebound, and the colors picked, in a config
+> file.
 
 Built with the [Charm](https://charm.sh) stack: [Bubble Tea](https://github.com/charmbracelet/bubbletea)
 and [Lipgloss](https://github.com/charmbracelet/lipgloss), with [Cobra](https://github.com/spf13/cobra)
@@ -54,8 +55,13 @@ And these, while the editor has focus:
 | `backspace`, `ctrl+h` | `editor.delete-left` | Delete the character before the cursor; at a line start, join the line to the one above |
 | `delete` | `editor.delete-right` | Delete the character under the cursor; at a line end, join the next line to this one |
 | `ctrl+k` | `editor.delete-line` | Delete the cursor's line |
+| `ctrl+z` | `editor.undo` | Undo the last edit |
+| `ctrl+shift+z`, `ctrl+y` | `editor.redo` | Redo the last edit undo took back |
 
 Any other character key types itself, and pasted text goes in at the cursor.
+ctrl+shift+z only reaches edit from a terminal that reports it — see
+[Keys your terminal must report](#keys-your-terminal-must-report); where it
+arrives as ctrl+z, it undoes, and ctrl+y redoes.
 Every key can be rebound in the config file: see
 [Configuration](#configuration). The tree lists hidden files too, and reads a
 folder from disk each time it is expanded.
@@ -80,6 +86,12 @@ is never written.
   Closing or quitting then stops and asks: the same key again closes or
   quits anyway, and the edits that couldn't be saved are lost; any other key
   cancels. After quitting anyway, edit prints what it couldn't save.
+- **Undo** takes back one step at a time: a word you typed with the spaces,
+  tabs or line breaks after it, a run of backspaces, a run of deletes, a
+  paste, a deleted line. Moving the cursor ends a step. Redo brings back
+  what undo took, until you edit again. Each tab keeps its own history, up
+  to 1000 steps, for as long as it is open: closing it drops the history.
+  An undo is saved like any edit.
 - A file is read when its tab opens. Changes made to it on disk while it is
   open are not noticed, and the next save overwrites them.
 - The cursor moves over, and deletes, characters as they are drawn: an
@@ -172,24 +184,49 @@ shortcuts:
   `sidebar`, then `down: *down` in `editor`.
 
 Keys are written as [Bubble Tea](https://github.com/charmbracelet/bubbletea)
-names them, which is also how the footer shows them:
+names them, which is also how the footer shows them: any modifiers, then
+the key.
 
 | Kind | Names |
 |---|---|
 | Characters | `a`, `J` (that is shift+j), `?`, `1`, `ñ`, … — any single character |
 | Space bar | `space` |
-| Control keys | `ctrl+a` … `ctrl+z` but `ctrl+i` and `ctrl+m` (those are `tab` and `enter`), `ctrl+@`, `ctrl+\`, `ctrl+]`, `ctrl+^`, `ctrl+_` |
-| Editing keys | `tab`, `shift+tab`, `enter`, `esc`, `backspace`, `delete`, `insert` |
-| Arrows | `up`, `down`, `left`, `right`, with `shift+`, `ctrl+` or `ctrl+shift+` in front |
-| Paging | `home`, `end`, `pgup`, `pgdown`, `ctrl+pgup`, `ctrl+pgdown`, and `home` / `end` with `shift+`, `ctrl+` or `ctrl+shift+` |
-| Function keys | `f1` … `f20` |
-| Alt | `alt+` in front of any of the above: `alt+x`, `alt+right`, `alt+space` |
+| Editing keys | `tab`, `enter`, `esc`, `backspace`, `delete`, `insert` |
+| Arrows and paging | `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdown` |
+| Function keys | `f1` … `f63` |
+| Modifiers | `ctrl+`, `alt+`, `shift+`, `meta+`, `hyper+` or `super+` in front of any of the above, alone or together: `ctrl+w`, `alt+right`, `ctrl+shift+z`, `shift+enter`, `alt+space` |
 
-Names are lower-case, and only keys a terminal can send are accepted:
-`ctrl+shift+w` is not a key, and neither is `shift+j` (write `J`). Most
-terminals send `ctrl+@` for ctrl+space. A key that means something in YAML —
-`#`, `:`, `[`, `]`, `{`, `}`, `,`, `&`, `*`, `!`, `|`, `>`, `'`, `"`, `%`,
-`@` or `` ` `` — must be quoted: `"#"`.
+Names are lower-case but for the character itself, and the modifiers can
+come in any order: edit writes them ctrl, alt, shift, meta, hyper, super,
+and a capital after a modifier as shift and the small letter, so
+`shift+ctrl+Z` is `ctrl+shift+z` and `alt+J` is `alt+shift+j`, as the footer
+shows them. `shift+j` is not a key (write `J`), and neither is shift before
+a sign: write the sign shift types, `alt+?` rather than `alt+shift+/`. With
+ctrl, a letter of a script other than Latin is the key it is on in the US
+layout, as terminals send it: on a Russian layout, ctrl+й is `ctrl+q`.
+ctrl+space is `ctrl+space`;
+`ctrl+@`, the name older versions of edit gave it, still means it. Keys edit
+never receives are not accepted: a modifier or lock key pressed alone, such
+as `leftshift` or `capslock`. A key that means something in YAML — `#`, `:`,
+`[`, `]`, `{`, `}`, `,`, `&`, `*`, `!`, `|`, `>`, `'`, `"`, `%`, `@` or
+`` ` `` — must be quoted: `"#"`.
+
+### Keys your terminal must report
+
+Some keys reach edit only from a terminal that reports them: ctrl+shift with
+a letter, shift+enter, ctrl+i apart from tab, ctrl+m apart from enter, and
+the like. Terminals with the kitty keyboard protocol — kitty, Ghostty, foot,
+Alacritty, WezTerm with `enable_kitty_keyboard` — or with xterm's
+modifyOtherKeys report them. Others send the key without its shift, or as
+the key it shares a byte with: ctrl+shift+z arrives as ctrl+z, ctrl+i as
+tab. Under tmux they need `set -g extended-keys on` in its config.
+
+Konsole reports none of them, but a key binding in its profile can send one
+itself: in Settings → Edit Current Profile → Keyboard, edit the key bindings
+and add a row with the key combination `Z+Ctrl+Shift` and the output
+`\E[122;6u` — the letter's code (122 for z, 97 for a), then `;6u`. kitty,
+foot and WezTerm use ctrl+shift+z for shortcuts of their own until you
+unbind it there.
 
 A mistake in the file stops edit before it starts, with a message that names
 the file and lists every problem:

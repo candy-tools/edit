@@ -17,9 +17,9 @@ const (
 )
 
 // cursorStyle draws the cursor's cell in reverse video. It is a plain SGR
-// sequence rather than a lipgloss style: lipgloss drops its styles on a
-// terminal without colours or with NO_COLOR set, and the cursor must show
-// there too.
+// sequence rather than a lipgloss style, so it shows however Bubble Tea
+// downsamples the frame's colours to the terminal's: without colours, as
+// with NO_COLOR, it keeps text attributes such as this one.
 var cursorStyle = ansi.NewStyle(ansi.AttrReverse)
 
 // editorBody draws the editor pane's body: the text window of doc, the
@@ -61,7 +61,7 @@ func editorBody(doc *document, focused bool, theme Theme) string {
 }
 
 // editorEdits are what the editor's actions do to a text: move its cursor,
-// or edit it.
+// edit it, or undo and redo its edits.
 var editorEdits = map[keymap.ID]func(*textedit.Buffer){
 	editorLeft:        (*textedit.Buffer).Left,
 	editorRight:       (*textedit.Buffer).Right,
@@ -78,6 +78,8 @@ var editorEdits = map[keymap.ID]func(*textedit.Buffer){
 	editorDeleteLeft:  (*textedit.Buffer).DeleteLeft,
 	editorDeleteRight: (*textedit.Buffer).DeleteRight,
 	editorDeleteLine:  (*textedit.Buffer).DeleteLine,
+	editorUndo:        (*textedit.Buffer).Undo,
+	editorRedo:        (*textedit.Buffer).Redo,
 }
 
 // editorAction applies an action of the editor to doc, the active tab's

@@ -1,18 +1,24 @@
 package tui
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/candy-tools/edit/app/metainfo"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/candy-tools/edit/libs/keymap"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -24,8 +30,10 @@ func TestNewModelStartState(t *testing.T) {
 	if m.tabs.Len() != 0 {
 		t.Errorf("start tabs = %d, want none open", m.tabs.Len())
 	}
-	if m.Init() != nil {
-		t.Error("Init should not schedule any command")
+	// Init only asks for grapheme widths (TestInitAsksForGraphemeWidths):
+	// nothing to save, no tick, no parse.
+	if _, ok := m.Init()().(tea.ModeReportMsg); !ok {
+		t.Error("Init should schedule nothing but the grapheme widths")
 	}
 }
 
@@ -97,12 +105,81 @@ func TestLettersTypeOnlyInTheEditor(t *testing.T) {
 	}
 }
 
-// Review focus: a key held down, or keys typed fast, reach the model as one
-// message of several runes. Every one of them is typed, in order.
-func TestABurstOfTypedKeysTypesEachKey(t *testing.T) {
-	m := press(openBig(30), "abc") // one message
-	if got, want := editorText(m)[0], "   1 abcline 1"; got != want {
-		t.Errorf("after typing abc at once, the first row = %q, want %q", got, want)
+// Review focus: Bubble Tea measures the frame's characters as edit lays them
+// out, as grapheme clusters, whatever the terminal answers to its query.
+func TestInitAsksForGraphemeWidths(t *testing.T) {
+	cmd := newTestModel().Init()
+	if cmd == nil {
+		t.Fatal("Init should return a command")
+	}
+	if got, want := cmd(), (tea.ModeReportMsg{Mode: ansi.ModeUnicodeCore, Value: ansi.ModeSet}); got != want {
+		t.Errorf("Init's command = %#v, want %#v", got, want)
+	}
+}
+
+// Review focus: edit asks the kitty keyboard protocol for alternate keys,
+// the shifted sign and the PC-101 key beside each key, which name a key the
+// same way in every encoding: alt+? as alt+?, ctrl+й as ctrl+q.
+func TestTheViewAsksForAlternateKeys(t *testing.T) {
+	if v := newTestModel().View(); !v.KeyboardEnhancements.ReportAlternateKeys || !v.AltScreen {
+		t.Errorf("the view asks for %+v, alt screen %t; want alternate keys on the alt screen", v.KeyboardEnhancements, v.AltScreen)
+	}
+}
+
+// syncBuffer is a bytes.Buffer a program can write from its goroutines
+// while a test reads it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// Review focus: in a real program, the renderer switches to grapheme widths
+// — it turns the terminal's mode 2027 on — before edit quits.
+func TestTheRendererMeasuresGraphemes(t *testing.T) {
+	in, keys := io.Pipe()
+	out := &syncBuffer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel) // a failed test doesn't leave the program running
+	done := make(chan error)
+	go func() {
+		done <- run(newTestModel(), make(chan os.Signal), tea.WithContext(ctx), tea.WithInput(in), tea.WithOutput(out),
+			tea.WithoutSignalHandler(), tea.WithWindowSize(100, 30))
+	}()
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(out.String(), ansi.SetModeUnicodeCore); {
+		if time.Now().After(deadline) {
+			t.Fatal("the renderer never switched to grapheme widths")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := keys.Write([]byte("\x11")); err != nil { // ctrl+q
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Review focus: Bubble Tea v2 sends a size of 0x0 when it has no terminal;
+// the model keeps the size it had.
+func TestAZeroSizeIsIgnored(t *testing.T) {
+	m := send(newTestModel(), tea.WindowSizeMsg{})
+	if w, h := m.size(); w != 100 || h != 30 {
+		t.Errorf("after a 0x0 size the model is %dx%d, want the 100x30 it had", w, h)
+	}
+	if got := len(sidebarRows(m)); got != 3 {
+		t.Errorf("after a 0x0 size the tree shows %d rows, want all 3", got)
 	}
 }
 
@@ -150,7 +227,7 @@ func TestAResizeKeepsTheCursorInView(t *testing.T) {
 }
 
 func TestViewFillsTerminal(t *testing.T) {
-	lines := strings.Split(newTestModel().View(), "\n")
+	lines := strings.Split(newTestModel().View().Content, "\n")
 	if len(lines) != 30 {
 		t.Fatalf("view is %d lines, want 30", len(lines))
 	}
@@ -162,7 +239,7 @@ func TestViewFillsTerminal(t *testing.T) {
 }
 
 func TestViewDefaultsTo80x24(t *testing.T) {
-	lines := strings.Split(newModel("/work/project", testFS, noWrites, testKeys, noColors).View(), "\n")
+	lines := strings.Split(newModel("/work/project", testFS, noWrites, testKeys, noColors).View().Content, "\n")
 	if len(lines) != 24 || lipgloss.Width(lines[1]) != 80 {
 		t.Errorf("before a WindowSizeMsg the view should be 80x24, got %d lines of %d cells",
 			len(lines), lipgloss.Width(lines[1]))
@@ -170,7 +247,7 @@ func TestViewDefaultsTo80x24(t *testing.T) {
 }
 
 func TestViewChrome(t *testing.T) {
-	lines := strings.Split(ansi.Strip(newTestModel().View()), "\n")
+	lines := strings.Split(ansi.Strip(newTestModel().View().Content), "\n")
 	if want := "edit " + metainfo.Version + "  /work/project"; !strings.Contains(lines[0], want) {
 		t.Errorf("header %q should contain %q", lines[0], want)
 	}
@@ -186,7 +263,7 @@ func TestViewChrome(t *testing.T) {
 }
 
 func TestSidebarSitsLeftOfEditor(t *testing.T) {
-	top := []rune(ansi.Strip(strings.Split(newTestModel().View(), "\n")[1]))
+	top := []rune(ansi.Strip(strings.Split(newTestModel().View().Content, "\n")[1]))
 	if top[0] != '╭' || top[29] != '╮' || top[30] != '╭' || top[99] != '╮' {
 		t.Errorf("want a 30-cell sidebar box, then a 70-cell editor box:\n%s", string(top))
 	}
@@ -203,7 +280,7 @@ func TestSidebarWidth(t *testing.T) {
 // topBorder is the top line of m's view, which holds the sidebar's title and
 // the tab strip, without styling.
 func topBorder(m model) string {
-	return ansi.Strip(strings.Split(m.View(), "\n")[1])
+	return ansi.Strip(strings.Split(m.View().Content, "\n")[1])
 }
 
 // openDocs opens a tab in m for each path, in order, holding a document with
@@ -293,7 +370,7 @@ func TestSidebarListsTheWorkspaceAtStart(t *testing.T) {
 // The tree reaches the screen: its rows fill the Files box, one per line
 // under the box's top border.
 func TestViewDrawsTheTreeInTheFilesBox(t *testing.T) {
-	lines := strings.Split(ansi.Strip(newTestModel().View()), "\n")
+	lines := strings.Split(ansi.Strip(newTestModel().View().Content), "\n")
 	for i, row := range []string{"❯ ▸ app", "    go.mod", "    README.md"} {
 		if got := lines[2+i]; !strings.HasPrefix(got, "│"+row+" ") {
 			t.Errorf("view line %d = %q, want the tree row %q inside the Files box", 2+i, got, row)
@@ -338,7 +415,7 @@ func TestTreeKeysNeedSidebarFocus(t *testing.T) {
 
 // footerText is the last line of m's view, the footer, without styling.
 func footerText(m model) string {
-	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 	return lines[len(lines)-1]
 }
 
@@ -390,7 +467,7 @@ func TestLongNamesAndDeepFoldersKeepTheLayout(t *testing.T) {
 	if row, _ := m.files.Selected(); row.Depth != 4 || row.Node.dir {
 		t.Fatalf("cursor on %+v, want the file four folders down", row)
 	}
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(m.View().Content, "\n")
 	for i, l := range lines[1 : len(lines)-1] {
 		if w := lipgloss.Width(l); w != 63 {
 			t.Errorf("body line %d is %d cells wide, want 63", i+1, w)
@@ -419,7 +496,7 @@ func TestUnsafeNamesKeepOneRowPerEntry(t *testing.T) {
 	if got, want := ansi.Strip(m.sidebarBody()), "❯   ?[2Jclear\n    two?lines"; got != want {
 		t.Errorf("sidebar = %q, want %q", got, want)
 	}
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(m.View().Content, "\n")
 	for i, l := range lines[1 : len(lines)-1] {
 		if w := lipgloss.Width(l); w != 100 {
 			t.Errorf("body line %d is %d cells wide, want 100", i+1, w)
@@ -439,7 +516,7 @@ func openBig(h int) model {
 // editorText is the editor pane's body as m's view draws it, one string per
 // row, without the box's borders, its trailing padding or styling.
 func editorText(m model) []string {
-	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 	w, _ := m.size()
 	sw := sidebarWidth(w)
 	var rows []string
@@ -692,7 +769,7 @@ func TestOpenFilesKeepTheLayout(t *testing.T) {
 	for range 12 {
 		m = press(m, "enter", "shift+tab", "down") // open each file in turn
 	}
-	if !strings.Contains(ansi.Strip(m.View()), "?[2J") {
+	if !strings.Contains(ansi.Strip(m.View().Content), "?[2J") {
 		t.Error("an escape code in a file should be drawn as ?, not sent to the terminal")
 	}
 	m = press(m, "shift+tab") // the editor focused, so the cursor is drawn
@@ -700,7 +777,7 @@ func TestOpenFilesKeepTheLayout(t *testing.T) {
 		m = press(m, moves...) // the cursor on a wide character, a tab, past the line, …
 		for _, w := range []int{83, 40, 12} {
 			m = send(m, tea.WindowSizeMsg{Width: w, Height: 12})
-			lines := strings.Split(m.View(), "\n")
+			lines := strings.Split(m.View().Content, "\n")
 			for i, l := range lines[1 : len(lines)-1] {
 				if got := lipgloss.Width(l); got != w {
 					t.Errorf("after %q at width %d: body line %d is %d cells wide", moves, w, i+1, got)
@@ -789,35 +866,44 @@ func TestTheFooterShowsTheReboundKeys(t *testing.T) {
 	}
 }
 
-// Review focus: a key held down, or keys typed fast, reach the model as one
-// message of several runes. Each acts as its own press.
-func TestABurstOfKeysActsOncePerKey(t *testing.T) {
-	m := press(newReboundModel(t, overrides{"sidebar": {"down": {"j"}}}), "jj") // one message
-	if got := sidebarRows(m)[2]; got != "❯   README.md" {
-		t.Errorf("after jj the third row = %q, want the cursor on README.md", got)
-	}
-}
-
-// Review focus: in a burst, each key acts in the pane that has focus by
-// then: l opens the file and focuses the editor, so j is typed into it.
-func TestABurstOfKeysFollowsTheFocus(t *testing.T) {
-	keys := rebound(t, overrides{"sidebar": {"open": {"l"}}})
-	m := press(send(newModel("/w", bigFS, noWrites, keys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30}), "lj") // one message
-	if got, want := editorText(m)[0], "   1 jline 1"; got != want {
-		t.Errorf("after lj the editor's first row = %q, want %q", got, want)
-	}
-}
-
 // Review focus: pasted text never acts, even when it holds bound keys.
 func TestPastedTextTriggersNothing(t *testing.T) {
 	m := newReboundModel(t, overrides{"sidebar": {"down": {"j"}, "open": {"q"}}})
 	for _, text := range []string{"j", "jqj"} {
-		nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true})
+		nm, cmd := m.Update(tea.PasteMsg{Content: text})
 		if cmd != nil {
 			t.Errorf("pasting %q must not return a command", text)
 		}
 		if got := sidebarRows(nm.(model))[0]; got != "❯ ▸ app" || nm.(model).tabs.Len() != 0 {
 			t.Errorf("pasting %q must not move the cursor or open anything, first row = %q", text, got)
 		}
+	}
+}
+
+// Review focus: a paste types in the editor, keys and all, and acts on
+// nothing.
+func TestPasteTypesInTheEditor(t *testing.T) {
+	m := press(newTestModel(), "down", "enter") // go.mod open, the editor focused
+	m = paste(m, "\x11j\n")                     // ctrl+q's byte, a letter, a line break
+	if got, want := m.activeDocument().text.String(), "\x11j\n"+goModText; got != want {
+		t.Errorf("after the paste the text is %q, want %q", got, want)
+	}
+}
+
+// Review focus: capitals and accented letters still type themselves.
+func TestTypingCapitalsAndAccents(t *testing.T) {
+	m := press(newTestModel(), "down", "enter", "G", "ñ", "é")
+	if got, want := m.activeDocument().text.LineText(0), "Gñémodule example.com/project"; got != want {
+		t.Errorf("the first line is %q, want %q", got, want)
+	}
+}
+
+// Review focus: a paste cancels a quit waiting to be pressed again, as any
+// key does.
+func TestAPasteCancelsAWaitingQuit(t *testing.T) {
+	m := newTestModel()
+	m.confirm = actQuit
+	if m = paste(m, "x"); m.confirm != (keymap.ID{}) {
+		t.Error("a paste should cancel the quit waiting for confirmation")
 	}
 }

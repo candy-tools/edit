@@ -11,8 +11,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // candy is the theme the highlighting tests color in.
@@ -29,13 +29,11 @@ func colored(capture, text string) string {
 	return candy.draw(candy.class(capture), text)
 }
 
-// newColorModel returns a model on fsys in candy, with lipgloss drawing 256
-// colors until the test ends, instant ticks and a 100x30 terminal. Its
-// tests keep the commands Update returns: a parse that is never run leaves
-// its document's Highlighter waiting for it.
+// newColorModel returns a model on fsys in candy, with instant ticks and a
+// 100x30 terminal. Its tests keep the commands Update returns: a parse that
+// is never run leaves its document's Highlighter waiting for it.
 func newColorModel(t *testing.T, fsys fs.FS) model {
 	t.Helper()
-	colors(t)
 	m := newModel("/w", fsys, noWrites, testKeys, candy)
 	m.tick = instantTick
 	return send(m, tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -46,12 +44,12 @@ var goFS = fstest.MapFS{"main.go": {Data: []byte("package main\n\nfunc main() {}
 
 func TestAFileIsColoredOnceItsParseLands(t *testing.T) {
 	m, parse := update(newColorModel(t, goFS), keyMsg("enter"))
-	if strings.Contains(m.View(), colored("keyword", "func")) {
+	if strings.Contains(m.View().Content, colored("keyword", "func")) {
 		t.Error("main.go is colored before its parse lands")
 	}
 	m, _ = drain(m, parse)
-	if !strings.Contains(m.View(), colored("keyword", "func")) {
-		t.Errorf("once its parse lands, func should be drawn as a keyword:\n%q", m.View())
+	if !strings.Contains(m.View().Content, colored("keyword", "func")) {
+		t.Errorf("once its parse lands, func should be drawn as a keyword:\n%q", m.View().Content)
 	}
 }
 
@@ -61,14 +59,14 @@ func TestColorsFollowAnEditThenItsParse(t *testing.T) {
 	m, parse := update(newColorModel(t, goFS), keyMsg("enter"))
 	m, _ = drain(m, parse)
 	m = press(m, "down", "down") // the start of func main() {}
-	m, parse = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("// "), Paste: true})
+	m, parse = update(m, tea.PasteMsg{Content: "// "})
 	m = press(m, "up") // the cursor off the line
-	if !strings.Contains(m.View(), "// "+colored("keyword", "func")) {
-		t.Errorf("before the parse lands, func should keep its color, three cells on:\n%q", m.View())
+	if !strings.Contains(m.View().Content, "// "+colored("keyword", "func")) {
+		t.Errorf("before the parse lands, func should keep its color, three cells on:\n%q", m.View().Content)
 	}
 	m, _ = drain(m, parse)
-	if !strings.Contains(m.View(), colored("comment", "// func main() {}")) {
-		t.Errorf("once the parse lands, the line should be a comment:\n%q", m.View())
+	if !strings.Contains(m.View().Content, colored("comment", "// func main() {}")) {
+		t.Errorf("once the parse lands, the line should be a comment:\n%q", m.View().Content)
 	}
 }
 
@@ -76,8 +74,8 @@ func TestTheCursorIsDrawnWithoutColors(t *testing.T) {
 	m, parse := update(newColorModel(t, goFS), keyMsg("enter"))
 	m, _ = drain(m, parse)
 	m = press(m, "down", "down") // on the f of func
-	if want := cursorStyle.Styled("f") + colored("keyword", "unc"); !strings.Contains(m.View(), want) {
-		t.Errorf("the cursor should be reverse video without the keyword's color, then the keyword's color:\n%q", m.View())
+	if want := cursorStyle.Styled("f") + colored("keyword", "unc"); !strings.Contains(m.View().Content, want) {
+		t.Errorf("the cursor should be reverse video without the keyword's color, then the keyword's color:\n%q", m.View().Content)
 	}
 }
 
@@ -97,12 +95,12 @@ func TestLargeFilesAndLongLinesStayPlain(t *testing.T) {
 	m := newColorModel(t, fstest.MapFS{"big.go": {Data: []byte(big)}, "long.go": {Data: []byte(long)}})
 	m, parse := update(m, keyMsg("enter")) // big.go
 	m, _ = drain(m, parse)
-	if strings.Contains(m.View(), colored("keyword", "func")) {
+	if strings.Contains(m.View().Content, colored("keyword", "func")) {
 		t.Error("a file over 256 KB should be drawn without colors")
 	}
 	m, parse = update(press(m, "shift+tab", "down"), keyMsg("enter")) // long.go
 	m, _ = drain(m, parse)
-	if view := m.View(); !strings.Contains(view, colored("keyword", "func")) || strings.Contains(view, colored("keyword", "var")) {
+	if view := m.View().Content; !strings.Contains(view, colored("keyword", "func")) || strings.Contains(view, colored("keyword", "var")) {
 		t.Errorf("long.go: func should be colored, and the line over 20,000 bytes plain:\n%q", view)
 	}
 }
@@ -111,7 +109,6 @@ func TestLargeFilesAndLongLinesStayPlain(t *testing.T) {
 // while keys keep coming; typing into a colored file loses nothing (run
 // with -race).
 func TestTypingWhileParsesRun(t *testing.T) {
-	colors(t)
 	d := newDisk()
 	m := send(newModel("/w", goFS, d.write, testKeys, candy), tea.WindowSizeMsg{Width: 100, Height: 30})
 	if err := run(m, make(chan os.Signal), runOpts(strings.NewReader("\rx\ry\rz\x11"))...); err != nil { // enter opens main.go, then x, y, z on lines of their own, then ctrl+q
@@ -149,8 +146,8 @@ func TestAFrameOfLongLinesIsFast(t *testing.T) {
 	if d := time.Since(start) / 20; d > 40*time.Millisecond {
 		t.Errorf("a frame of 10 lines of 19 KB took %v: it must cost what the window shows of them", d)
 	}
-	if key := fmt.Sprintf(`"k%d"`, last-1); !strings.Contains(m.View(), colored("property", key)) {
-		t.Errorf("at the lines' ends, %s should be colored as a property:\n%q", key, m.View())
+	if key := fmt.Sprintf(`"k%d"`, last-1); !strings.Contains(m.View().Content, colored("property", key)) {
+		t.Errorf("at the lines' ends, %s should be colored as a property:\n%q", key, m.View().Content)
 	}
 }
 
@@ -171,14 +168,14 @@ func TestColoredFilesKeepTheLayout(t *testing.T) {
 	m, _ = drain(m, parse)
 	m, parse = update(press(m, "shift+tab", "down"), keyMsg("enter"))
 	m, _ = drain(m, parse)
-	if !strings.Contains(m.View(), colored("markup.heading", " 日本 ")) || !strings.Contains(m.View(), colored("keyword", "func")) {
-		t.Fatalf("b.md should be colored, its Go block as Go:\n%q", m.View())
+	if !strings.Contains(m.View().Content, colored("markup.heading", " 日本 ")) || !strings.Contains(m.View().Content, colored("keyword", "func")) {
+		t.Fatalf("b.md should be colored, its Go block as Go:\n%q", m.View().Content)
 	}
 	for _, w := range []int{100, 41, 12} {
 		m = send(m, tea.WindowSizeMsg{Width: w, Height: 12})
 		for _, key := range []string{"ctrl+pgup", "ctrl+pgdown"} {
 			m = press(m, key)
-			lines := strings.Split(m.View(), "\n")
+			lines := strings.Split(m.View().Content, "\n")
 			for i, l := range lines[1 : len(lines)-1] {
 				if got := lipgloss.Width(l); got != w {
 					t.Errorf("%s at width %d: body line %d is %d cells wide", activeKey(m), w, i+1, got)

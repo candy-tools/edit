@@ -16,12 +16,13 @@ import (
 	"strings"
 	"syscall"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/candy-tools/edit/app/metainfo"
 	"github.com/candy-tools/edit/libs/keymap"
 	"github.com/candy-tools/edit/libs/tabset"
 	"github.com/candy-tools/edit/libs/treeview"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -66,9 +67,10 @@ type model struct {
 }
 
 // Run starts the interactive editor on the workspace directory root, with
-// keys bound as keys says and text colored in theme, and returns once it has
-// quit and saved every edit it could.
-func Run(root string, keys *keymap.Map, theme Theme) error {
+// keys bound as keys says, text colored in theme and the frame drawn in the
+// colors the terminal shows, colors, and returns once it has quit and saved
+// every edit it could.
+func Run(root string, keys *keymap.Map, theme Theme, colors colorprofile.Profile) error {
 	// edit catches SIGHUP, SIGINT and SIGTERM itself, until it is done, rather
 	// than leave them to Bubble Tea: its handler can block for good on a
 	// signal that arrives as the program ends, and a second signal during
@@ -79,7 +81,7 @@ func Run(root string, keys *keymap.Map, theme Theme) error {
 	defer signal.Stop(sigs)
 	g := &gate{write: diskWriter(root)}
 	defer g.close()
-	return run(newModel(root, os.DirFS(root), g.pass, keys, theme), sigs, tea.WithAltScreen(), tea.WithoutSignalHandler())
+	return run(newModel(root, os.DirFS(root), g.pass, keys, theme), sigs, tea.WithoutSignalHandler(), tea.WithColorProfile(colors))
 }
 
 // run runs a program on m until it quits, turning each signal from sigs into
@@ -132,12 +134,25 @@ func newModel(root string, fsys fs.FS, write writeFunc, keys *keymap.Map, theme 
 	}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd { return graphemeWidths }
+
+// graphemeWidths makes Bubble Tea measure the characters of a frame as edit
+// lays them out, as grapheme clusters, rather than a rune at a time: it
+// reports mode 2027 to the program as set, as a terminal with grapheme
+// clustering answers Bubble Tea's query for it, a query Bubble Tea doesn't
+// send over SSH. A ZWJ family is then two cells to the renderer, as it is
+// to edit.
+func graphemeWidths() tea.Msg {
+	return tea.ModeReportMsg{Mode: ansi.ModeUnicodeCore, Value: ansi.ModeSet}
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		if msg.Width == 0 || msg.Height == 0 {
+			break // what Bubble Tea sends without a terminal: keep the size there is
+		}
 		m.width, m.height = msg.Width, msg.Height
 		m.files.SetHeight(paneHeight(msg.Height))
 		tabs, _ := m.tabs.Tabs()
@@ -145,16 +160,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fit(t.Value)
 		}
 		m.tabs.SetWidth(stripWidth(msg.Width))
-	case tea.KeyMsg:
-		// A key held down, or keys typed fast, can arrive as one message:
-		// each press acts in turn, in the pane that has focus by then. Only
-		// quitting cuts the run short.
-		for _, k := range keymap.Presses(msg) {
-			var quit tea.Cmd
-			if m, quit = m.keyPress(k); quit != nil {
-				return m, quit
-			}
+	case tea.KeyPressMsg:
+		var quit tea.Cmd
+		if m, quit = m.keyPress(msg); quit != nil {
+			return m, quit
 		}
+	case tea.PasteMsg:
+		m = m.paste(msg.Content)
 	case saveTickMsg:
 		m, cmd = m.startWrites()
 	case savedMsg:
@@ -173,15 +185,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // pane or, in the editor, the text it types when it triggers none. Only quit
 // returns a command. Any press but the same close or quit again cancels a
 // close or quit whose save failed.
-func (m model) keyPress(msg tea.KeyMsg) (model, tea.Cmd) {
+func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	confirm := m.confirm
 	m.confirm = keymap.ID{}
 	id, ok := m.keys.Lookup(m.focus.scope(), msg)
 	if !ok {
-		if text, ok := keymap.Typed(msg); ok && m.focus == paneEditor {
-			doc := m.activeDocument()
-			typeText(doc, text)
-			m.fit(doc)
+		if text, ok := keymap.Typed(msg); ok {
+			m.typeIn(text)
 		}
 		return m, nil
 	}
@@ -204,6 +214,25 @@ func (m model) keyPress(msg tea.KeyMsg) (model, tea.Cmd) {
 		m = m.paneAction(id)
 	}
 	return m, nil
+}
+
+// paste types pasted text in the active tab while the editor has focus.
+// Pasted text never triggers an action, even when it holds bound keys, and
+// like a key press it cancels a close or quit whose save failed.
+func (m model) paste(text string) model {
+	m.confirm = keymap.ID{}
+	m.typeIn(text)
+	return m
+}
+
+// typeIn types text at the cursor of the active tab while the editor has
+// focus: what a key types, or pasted text.
+func (m model) typeIn(text string) {
+	if m.focus == paneEditor {
+		doc := m.activeDocument()
+		typeText(doc, text)
+		m.fit(doc)
+	}
 }
 
 // quit saves every tab and quits. When a tab can't be saved, edit stays and
@@ -323,15 +352,21 @@ func (m model) size() (w, h int) {
 }
 
 // View composes the header, the sidebar and editor panes side by side, and the
-// footer to the terminal size.
-func (m model) View() string {
+// footer to the terminal size, on the alternate screen. It asks the kitty
+// keyboard protocol to report the alternate keys beside each key, the
+// shifted sign and the PC-101 key, so the keymap names a key the same way
+// whatever the terminal and the layout: alt+? as alt+?, ctrl+й as ctrl+q.
+func (m model) View() tea.View {
 	w, h := m.size()
 	bodyH := bodyHeight(h)
 	sw := sidebarWidth(w)
 	sidebar := titledBox("Files", m.sidebarBody(), sw, bodyH, m.focus == paneSidebar)
 	body := editorBody(m.activeDocument(), m.focus == paneEditor, m.theme)
 	editor := frame(tabStrip(m.tabs, m.focus == paneEditor), body, w-sw, bodyH, m.focus == paneEditor)
-	return m.header(w) + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, sidebar, editor) + "\n" + m.footer(w)
+	v := tea.NewView(m.header(w) + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, sidebar, editor) + "\n" + m.footer(w))
+	v.AltScreen = true
+	v.KeyboardEnhancements.ReportAlternateKeys = true
+	return v
 }
 
 // bodyHeight is the height of the sidebar and editor boxes in a terminal h

@@ -6,7 +6,7 @@ import (
 	"github.com/candy-tools/edit/libs/syntax"
 	"github.com/candy-tools/edit/libs/syntax/treesitter"
 	"github.com/candy-tools/edit/libs/textedit"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 const (

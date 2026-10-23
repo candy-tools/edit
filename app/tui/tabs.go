@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/candy-tools/edit/libs/tabset"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // openTab is one of the editor's tabs: an open document, keyed by its path.
