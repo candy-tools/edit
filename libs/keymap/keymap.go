@@ -1,12 +1,12 @@
 // Package keymap binds the keys a Bubble Tea program receives to the actions
 // they trigger, and lets the user rebind them. Actions live in scopes: the
-// global scope is active everywhere, and the caller says which other scope
-// is active with it, such as the focused pane. Keys are written as Bubble Tea
-// names them, modifiers first ("ctrl+w", "pgdown", "ctrl+shift+z", "j"),
-// with "space" for the space bar. A terminal can send one key in several
-// ways — xterm reports ctrl+shift+z as a capital Z with shift, the kitty
-// keyboard protocol as a small z — so the map gives each key press, and each
-// key it is given, one name: see New.
+// caller says which scope is active, such as the focused pane, and the
+// global scope is active alongside it unless that scope is modal. Keys are
+// written as Bubble Tea names them, modifiers first ("ctrl+w", "pgdown",
+// "ctrl+shift+z", "j"), with "space" for the space bar. A terminal can send
+// one key in several ways — xterm reports ctrl+shift+z as a capital Z with
+// shift, the kitty keyboard protocol as a small z — so the map gives each
+// key press, and each key it is given, one name: see New.
 //
 // An action can also be bound to a sequence of keys, pressed one after the
 // other, written with a space between them ("esc esc", "ctrl+k w"). Its
@@ -16,7 +16,9 @@
 //
 // A scope can be one where keys type text, such as a text editor's: there a
 // key that types text can't be bound, nor in the global scope, which is
-// active alongside it, and Typed says what a key press types.
+// active alongside it, and Typed says what a key press types. A scope can
+// also be modal, as a popup that takes every key is: the global actions are
+// not active alongside it, so its keys don't clash with theirs.
 //
 // It is app-agnostic and depends only on the standard library and Bubble
 // Tea; a depguard rule in .golangci.yaml keeps it from importing the app.
@@ -34,7 +36,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// Global is the scope whose actions are active alongside every other scope.
+// Global is the scope whose actions are active alongside every other scope
+// but a modal one.
 const Global = "global"
 
 // ID names an action: its scope and its name within the scope.
@@ -50,11 +53,25 @@ type Action struct {
 	Required bool     // must keep at least one key
 }
 
+// A Scope says how keys work in one of the scopes other than the global
+// one. A scope that New is given no Scope for is plain: keys type no text
+// there, and the global actions are active alongside it.
+type Scope struct {
+	Name string
+	// Typing says keys type text in the scope, as in a text editor: a key
+	// that types text can't be bound there.
+	Typing bool
+	// Modal says the global actions are not active alongside the scope, as
+	// in a popup that takes every key.
+	Modal bool
+}
+
 // Map is the keys bound to a set of actions. It is read-only once built.
 type Map struct {
 	keys     map[ID][]string            // each action's keys, first key first; absent when it has none
 	bindings map[string]map[string]ID   // scope → key → the action the key triggers
 	starts   map[string]map[string]bool // scope → the starts of its sequences: their first key, first two keys, …
+	modal    map[string]bool            // the modal scopes, where the global actions are not active
 }
 
 // New binds each of actions to its default keys, except that an action
@@ -76,31 +93,35 @@ type Map struct {
 // spelled as above. A space is part of a key when nothing but modifiers come
 // before it in the key, so "alt+ " is still alt and the space bar.
 //
-// typing names the scopes where keys type text, such as a text editor's. A
-// key that types text — a single character, or the space bar with shift or
-// without — can't be bound in them, nor start a sequence there, nor in the
-// global scope when there are any, since global actions are active
-// alongside them. Such a key can go on with a sequence ("ctrl+k w"): the
-// sequence's start takes it before it types.
+// scopes says how keys work in the scopes that aren't plain. In a typing
+// scope, such as a text editor's, a key that types text — a single
+// character, or the space bar with shift or without — can't be bound, nor
+// start a sequence, and neither can it in the global scope when a typing
+// scope isn't modal, since the global actions are active alongside it. Such
+// a key can go on with a sequence ("ctrl+k w"): the sequence's start takes
+// it before it types. In a modal scope, such as a popup's, the global
+// actions are not active, so its keys are checked against each other only.
 //
 // It returns an error listing every problem, one per line, sorted: a scope
 // or an action in overrides that actions doesn't have, a key that is no key,
 // a key that types text bound where keys type text, a Required action left
 // with no keys, a key bound to two actions that are active together,
-// because they are in the same scope or one of them is global, and a key
-// bound to one action that starts a sequence bound to another active with
-// it, which the key would both trigger and start. The defaults are checked
-// too, since an override can clash with another action's default key.
+// because they are in the same scope or one of them is global and the
+// other's scope isn't modal, and a key bound to one action that starts a
+// sequence bound to another active with it, which the key would both
+// trigger and start. The defaults are checked too, since an override can
+// clash with another action's default key.
 //
 // An action with an empty scope or name, two actions with the same ID, or a
-// typing scope no action is in, is a bug in the caller: New panics.
-func New(actions []Action, overrides map[string]map[string][]string, typing ...string) (*Map, error) {
-	ids, scopes := index(actions)
-	typed := typingScopes(typing, scopes)
-	problems := unknown(overrides, ids, scopes)
-	m := &Map{keys: map[ID][]string{}, bindings: map[string]map[string]ID{}, starts: map[string]map[string]bool{}}
+// Scope that is the global scope, that no action is in or that is given
+// twice, is a bug in the caller: New panics.
+func New(actions []Action, overrides map[string]map[string][]string, scopes ...Scope) (*Map, error) {
+	ids, names := index(actions)
+	typed, modal := describe(scopes, names)
+	problems := unknown(overrides, ids, names)
+	m := &Map{keys: map[ID][]string{}, bindings: map[string]map[string]ID{}, starts: map[string]map[string]bool{}, modal: modal}
 	byKey := map[string]map[string][]ID{} // scope → key → the actions it is bound to
-	for scope := range scopes {
+	for scope := range names {
 		byKey[scope] = map[string][]ID{}
 	}
 	for _, a := range actions {
@@ -125,8 +146,8 @@ func New(actions []Action, overrides map[string]map[string][]string, typing ...s
 			byKey[a.Scope][k] = append(byKey[a.Scope][k], a.ID)
 		}
 	}
-	problems = append(problems, conflicts(byKey)...)
-	problems = append(problems, ambiguities(byKey)...)
+	problems = append(problems, conflicts(byKey, modal)...)
+	problems = append(problems, ambiguities(byKey, modal)...)
 	if len(problems) > 0 {
 		slices.Sort(problems)
 		errs := make([]error, 0, len(problems))
@@ -165,19 +186,36 @@ func index(actions []Action) (ids map[ID]bool, scopes map[string]bool) {
 	return ids, scopes
 }
 
-// typingScopes returns the scopes where a key that types text can't be
-// bound: typing and, when it names any, the global scope. It panics on a
-// typing scope that is not among scopes: Lookup finds nothing in a scope
-// without actions, so it can only be a typo, which would turn the check off.
-func typingScopes(typing []string, scopes map[string]bool) map[string]bool {
-	typed := make(map[string]bool, len(typing)+1)
-	for _, scope := range typing {
-		if !scopes[scope] {
-			panic(fmt.Sprintf("keymap: typing scope %q has no actions", scope))
+// describe returns the scopes where a key that types text can't be bound —
+// the typing scopes and, when one of them isn't modal, the global scope,
+// which is active alongside it — and the modal scopes. It panics on a Scope
+// that is the global scope, that names a scope no action is in, or that is
+// given twice: Lookup finds nothing in a scope without actions, so the name
+// can only be a typo, which would turn the checks off.
+func describe(scopes []Scope, names map[string]bool) (typed, modal map[string]bool) {
+	typed, modal = map[string]bool{}, map[string]bool{}
+	seen := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		switch {
+		case s.Name == Global:
+			panic("keymap: the global scope can't be given a Scope")
+		case !names[s.Name]:
+			panic(fmt.Sprintf("keymap: scope %q has no actions", s.Name))
+		case seen[s.Name]:
+			panic(fmt.Sprintf("keymap: scope %q is described twice", s.Name))
 		}
-		typed[scope], typed[Global] = true, true
+		seen[s.Name] = true
+		if s.Typing {
+			typed[s.Name] = true
+			if !s.Modal {
+				typed[Global] = true
+			}
+		}
+		if s.Modal {
+			modal[s.Name] = true
+		}
 	}
-	return typed
+	return typed, modal
 }
 
 // unknown lists the scopes and the actions in overrides that are not among
@@ -199,17 +237,18 @@ func unknown(overrides map[string]map[string][]string, ids map[ID]bool, scopes m
 }
 
 // conflicts lists the keys bound to two actions that are active together:
-// in the same scope, or one of them global. byKey is scope → key → the
-// actions the key is bound to. The actions in a message are in sorted
-// order, and a key on three or more actions is reported against the first
-// of them, once for each of the others. A clash between global actions is
-// found again in every scope, so the caller drops the repeats.
-func conflicts(byKey map[string]map[string][]ID) []string {
+// in the same scope, or one of them global while the other's scope isn't
+// modal. byKey is scope → key → the actions the key is bound to, and modal
+// holds the modal scopes. The actions in a message are in sorted order, and
+// a key on three or more actions is reported against the first of them,
+// once for each of the others. A clash between global actions is found
+// again in every scope, so the caller drops the repeats.
+func conflicts(byKey map[string]map[string][]ID, modal map[string]bool) []string {
 	var problems []string
 	for scope, keys := range byKey {
 		for k, bound := range keys {
 			bound = slices.Clone(bound)
-			if scope != Global {
+			if scope != Global && !modal[scope] {
 				bound = append(bound, byKey[Global][k]...)
 			}
 			if len(bound) < 2 {
@@ -226,21 +265,27 @@ func conflicts(byKey map[string]map[string][]ID) []string {
 
 // ambiguities lists the keys bound to an action that start a sequence bound
 // to another, when the two are active together: in the same scope, or one
-// of them global. The key would both trigger its action and start the
-// sequence. byKey is scope → key → the actions the key is bound to. A clash
+// of them global while the other's scope isn't modal. The key would both
+// trigger its action and start the sequence. byKey is scope → key → the
+// actions the key is bound to, and modal holds the modal scopes. A clash
 // between global actions is found again in every scope, so the caller drops
 // the repeats.
-func ambiguities(byKey map[string]map[string][]ID) []string {
+func ambiguities(byKey map[string]map[string][]ID, modal map[string]bool) []string {
 	var problems []string
 	for scope := range byKey {
+		alongside := scope != Global && !modal[scope] // the global actions are active with scope's
 		active := func(k string) []ID {
 			bound := slices.Clone(byKey[scope][k])
-			if scope != Global {
+			if alongside {
 				bound = append(bound, byKey[Global][k]...)
 			}
 			return bound
 		}
-		for _, keys := range []map[string][]ID{byKey[scope], byKey[Global]} {
+		keysets := []map[string][]ID{byKey[scope]}
+		if alongside {
+			keysets = append(keysets, byKey[Global])
+		}
+		for _, keys := range keysets {
 			for k := range keys {
 				seq := strings.Split(k, " ")
 				for n := 1; n < len(seq); n++ {
@@ -259,19 +304,23 @@ func ambiguities(byKey map[string]map[string][]ID) []string {
 
 // Lookup returns what msg does while scope is active, pressed after
 // pending, the keys of a sequence pressed so far ("" for none): the action
-// it triggers, a global action first, then one of scope's; or, when it goes
-// on with a sequence without ending it, no action and next, the keys of the
-// sequence pressed so far, for the caller to pass to the next Lookup. A key
-// that goes on with no sequence after pending counts on its own. A key
-// bound to nothing triggers none, and neither does any key in an unknown
-// scope. It doesn't change the map, so it is safe to call from a Bubble Tea
-// View.
+// it triggers, a global action first, unless scope is modal, then one of
+// scope's; or, when it goes on with a sequence without ending it, no action
+// and next, the keys of the sequence pressed so far, for the caller to pass
+// to the next Lookup. A key that goes on with no sequence after pending
+// counts on its own. A key bound to nothing triggers none, and neither does
+// any key in an unknown scope. It doesn't change the map, so it is safe to
+// call from a Bubble Tea View.
 //
 // A terminal without the kitty keyboard protocol sends alt and a key as esc
 // then the key, so Bubble Tea decodes esc and a key pressed together, such
-// as a quick double esc, as alt and the key. An alt key that does nothing
-// is therefore taken as esc then the key, if they trigger an action or go on
-// with a sequence: alt+esc as esc esc.
+// as a quick double esc, as alt and the key. An alt key that does nothing is
+// therefore taken as esc then the key, if they trigger an action or go on
+// with a sequence: alt+esc as esc esc. An alt+esc that does nothing even so
+// is taken as one esc, when esc triggers an action, its second esc dropped:
+// a fast double esc closes a popup bound to esc. Other alt keys are never
+// taken for esc alone, since Bubble Tea decodes real alt chords, alt+b or
+// alt+left, the same way.
 func (m *Map) Lookup(scope, pending string, msg tea.KeyPressMsg) (id ID, next string, ok bool) {
 	if _, known := m.bindings[scope]; !known {
 		return ID{}, "", false
@@ -281,10 +330,14 @@ func (m *Map) Lookup(scope, pending string, msg tea.KeyPressMsg) (id ID, next st
 	if ok || next != "" || key.Mod&tea.ModAlt == 0 {
 		return id, next, ok
 	}
-	if _, afterEsc, _ := m.step(scope, pending, "esc"); afterEsc != "" {
+	escID, afterEsc, escOK := m.step(scope, pending, "esc")
+	if afterEsc != "" {
 		if id, next, ok := m.exact(scope, afterEsc+" "+name(withoutAlt(key))); ok || next != "" {
 			return id, next, ok
 		}
+	}
+	if escOK && key.Code == tea.KeyEscape {
+		return escID, "", true
 	}
 	return ID{}, "", false
 }
@@ -301,15 +354,22 @@ func (m *Map) step(scope, pending, k string) (id ID, next string, ok bool) {
 }
 
 // exact returns what the keys seq do while scope is active: the action they
-// trigger or, when they start a sequence, seq itself as next.
+// trigger or, when they start a sequence, seq itself as next. The global
+// actions count first, unless scope is modal.
 func (m *Map) exact(scope, seq string) (id ID, next string, ok bool) {
-	for _, s := range []string{Global, scope} {
+	scopes := []string{Global, scope}
+	if m.modal[scope] {
+		scopes = scopes[1:]
+	}
+	for _, s := range scopes {
 		if id, ok := m.bindings[s][seq]; ok {
 			return id, "", true
 		}
 	}
-	if m.starts[Global][seq] || m.starts[scope][seq] {
-		return ID{}, seq, false
+	for _, s := range scopes {
+		if m.starts[s][seq] {
+			return ID{}, seq, false
+		}
 	}
 	return ID{}, "", false
 }

@@ -3,10 +3,11 @@
 // header and a key-hint footer. The sidebar browses the workspace as a folder
 // tree, and enter opens a file in a tab of the editor pane, where it can be
 // edited, its text colored by its syntax; edits are saved in the background,
-// and when a tab closes or edit quits. Keys are looked up in a keymap, which
-// the user can rebind in the config file, as they can pick the theme and
-// turn the mouse on, to close a tab with a click on its × and move with the
-// wheel.
+// and when a tab closes or edit quits. ctrl+f opens a search popup: from the
+// sidebar it searches every file of the workspace, from the editor the open
+// file. Keys are looked up in a keymap, which the user can rebind in the
+// config file, as they can pick the theme and turn the mouse on, to close a
+// tab with a click on its × and move with the wheel.
 package tui
 
 import (
@@ -71,6 +72,13 @@ type model struct {
 	pending string                  // the keys of a sequence pressed so far, waiting for the next; "" for none
 	presses int                     // how many keys were pressed, so a wait ends only if no key came since
 	timeout func(press int) tea.Cmd // makes the command that ends the wait key press press started for a sequence's next key
+
+	search   *searchPopup        // the open search popup; nil when none is
+	query    string              // the query the popup had when it last closed: the next one opens with it
+	searches int                 // counts the searches: each query change, opening and closing raises it, so an older one's pause and results are dropped
+	ignores  fs.FS               // where the ignore files are read: the workspace's repository, or the workspace
+	inside   string              // the workspace's folder in ignores, "." when it is its root
+	pause    func(n int) tea.Cmd // makes the command that ends search n's typing pause
 }
 
 // Run starts the interactive editor on the workspace directory root, with
@@ -88,7 +96,10 @@ func Run(root string, keys *keymap.Map, theme Theme, colors colorprofile.Profile
 	defer signal.Stop(sigs)
 	g := &gate{write: diskWriter(root)}
 	defer g.close()
-	return run(newModel(root, os.DirFS(root), g.pass, keys, theme, mouse), sigs, tea.WithoutSignalHandler(), tea.WithColorProfile(colors))
+	m := newModel(root, os.DirFS(root), g.pass, keys, theme, mouse)
+	repo, inside := repository(root)
+	m.ignores, m.inside = os.DirFS(repo), inside
+	return run(m, sigs, tea.WithoutSignalHandler(), tea.WithColorProfile(colors))
 }
 
 // run runs a program on m until it quits, turning each signal from sigs into
@@ -140,6 +151,9 @@ func newModel(root string, fsys fs.FS, write writeFunc, keys *keymap.Map, theme 
 		write:   write,
 		tick:    saveTick,
 		timeout: sequenceTimer,
+		ignores: fsys,
+		inside:  ".",
+		pause:   searchTimer,
 	}
 }
 
@@ -169,6 +183,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fit(t.Value)
 		}
 		m.tabs.SetWidth(stripWidth(msg.Width))
+		m.fitSearch()
 	case tea.KeyPressMsg:
 		var quit tea.Cmd
 		if m, quit = m.keyPress(msg); quit != nil {
@@ -198,16 +213,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case parsedMsg:
 		// Open tab or not: a closed tab's Highlighter frees the tree.
 		msg.doc.syntax.Done(msg.result)
+	case searchFoundMsg, searchDueMsg:
+		m, cmd = m.searchMsg(msg)
 	}
 	// Writes and their results can add or take away a tab title's ⚠.
 	m.tabs.Remeasure()
 	m, tick := m.scheduleSave()
-	return m, tea.Batch(cmd, tick, m.parses())
+	return m, tea.Batch(cmd, tick, m.parses(), m.searchCmd())
 }
 
-// keyPress applies one key press: the action it triggers in the focused
-// pane, after the keys of a sequence pressed before it, or else, when it
-// doesn't go on with a sequence either, in the editor, the text it types.
+// keyPress applies one key press: the action it triggers in the search
+// popup while it is open, otherwise in the focused pane, after the keys of
+// a sequence pressed before it; or else, when it doesn't go on with a
+// sequence either, the text it types, in the popup's query or the editor.
 // Only quit returns a command. Any press but the same close or quit again
 // cancels a close or quit whose save failed, so a sequence that closes or
 // quits never does it anyway: its first key cancels.
@@ -215,13 +233,16 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	confirm := m.confirm
 	m.confirm = keymap.ID{}
 	m.presses++
-	id, next, ok := m.keys.Lookup(m.focus.scope(), m.pending, msg)
+	id, next, ok := m.keys.Lookup(m.scope(), m.pending, msg)
 	m.pending = next
 	if !ok {
 		if text, ok := keymap.Typed(msg); ok && next == "" {
-			m.typeIn(text)
+			m = m.typeIn(text)
 		}
 		return m, nil
+	}
+	if id.Scope == scopeSearch {
+		return m.searchAction(id), nil
 	}
 	switch id {
 	case actQuit:
@@ -240,31 +261,49 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		if t, ok := m.tabs.Active(); ok {
 			m = m.closeTab(t, confirm == actCloseTab)
 		}
+	case sidebarSearch, editorSearch:
+		m = m.openSearch()
 	default:
 		m = m.paneAction(id)
 	}
 	return m, nil
 }
 
-// paste types pasted text in the active tab while the editor has focus.
-// Pasted text never triggers an action, even when it holds bound keys, nor
-// goes on with a sequence, and like a key press it cancels a close or quit
-// whose save failed.
+// scope is the keymap scope active alongside the global one: the search
+// popup's while it is open, which takes every key, or the focused pane's.
+func (m model) scope() string {
+	if m.search != nil {
+		return scopeSearch
+	}
+	return m.focus.scope()
+}
+
+// focused reports whether pane p has focus and gets the keys: it has focus,
+// and no search popup is open over it.
+func (m model) focused(p pane) bool { return m.focus == p && m.search == nil }
+
+// paste types pasted text where keys type. Pasted text never triggers an
+// action, even when it holds bound keys, nor goes on with a sequence, and
+// like a key press it cancels a close or quit whose save failed.
 func (m model) paste(text string) model {
 	m.confirm = keymap.ID{}
 	m.pending = ""
-	m.typeIn(text)
-	return m
+	return m.typeIn(text)
 }
 
-// typeIn types text at the cursor of the active tab while the editor has
+// typeIn types text where keys type: in the search popup's query while it
+// is open, otherwise at the cursor of the active tab while the editor has
 // focus: what a key types, or pasted text.
-func (m model) typeIn(text string) {
+func (m model) typeIn(text string) model {
+	if m.search != nil {
+		return m.searchType(text)
+	}
 	if m.focus == paneEditor {
 		doc := m.activeDocument()
 		typeText(doc, text)
 		m.fit(doc)
 	}
+	return m
 }
 
 // quit saves every tab and quits. When a tab can't be saved, edit stays and
@@ -303,8 +342,12 @@ func (m model) closeTab(t openTab, anyway bool) model {
 // one, and another left click switches to the tab and focuses the editor.
 // Like a key press, a click ends a sequence and cancels a close or quit
 // whose save failed, but for a click that closes the tab that couldn't be
-// saved again, which closes it anyway.
+// saved again, which closes it anyway. With the search popup open, it does
+// nothing.
 func (m model) click(mouse tea.Mouse) model {
+	if m.search != nil {
+		return m // the popup takes the keys, and the mouse does nothing
+	}
 	confirm := m.confirm
 	m.confirm, m.pending = keymap.ID{}, ""
 	w, _ := m.size()
@@ -339,8 +382,12 @@ const wheelLines = 3
 // wheel moves the cursor of the pane under the mouse wheel, the file tree's
 // or the active tab's, wheelLines rows up or down, as up or down pressed in
 // that pane would; focus stays where it is. Like a key press, it ends a
-// sequence and cancels a close or quit whose save failed.
+// sequence and cancels a close or quit whose save failed. With the search
+// popup open, it does nothing.
 func (m model) wheel(mouse tea.Mouse) model {
+	if m.search != nil {
+		return m // the popup takes the keys, and the mouse does nothing
+	}
 	m.confirm, m.pending = keymap.ID{}, ""
 	w, h := m.size()
 	if mouse.Y < 1 || mouse.Y > bodyHeight(h) || mouse.Button != tea.MouseWheelUp && mouse.Button != tea.MouseWheelDown {
@@ -455,14 +502,20 @@ func (m model) size() (w, h int) {
 // keyboard protocol to report the alternate keys beside each key, the
 // shifted sign and the PC-101 key, so the keymap names a key the same way
 // whatever the terminal and the layout: alt+? as alt+?, ctrl+й as ctrl+q.
+// With the search popup open, the panes are drawn unfocused, and the popup
+// over them.
 func (m model) View() tea.View {
 	w, h := m.size()
 	bodyH := bodyHeight(h)
 	sw := sidebarWidth(w)
-	sidebar := titledBox("Files", m.sidebarBody(), sw, bodyH, m.focus == paneSidebar)
-	body := editorBody(m.activeDocument(), m.focus == paneEditor, m.theme)
-	editor := frame(tabStrip(m.tabs, m.focus == paneEditor, m.mouse), body, w-sw, bodyH, m.focus == paneEditor)
-	v := tea.NewView(m.header(w) + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, sidebar, editor) + "\n" + m.footer(w))
+	sidebar := titledBox("Files", m.sidebarBody(), sw, bodyH, m.focused(paneSidebar))
+	body := editorBody(m.activeDocument(), m.focused(paneEditor), m.theme)
+	editor := frame(tabStrip(m.tabs, m.focused(paneEditor), m.mouse), body, w-sw, bodyH, m.focused(paneEditor))
+	content := m.header(w) + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, sidebar, editor) + "\n" + m.footer(w)
+	if m.search != nil {
+		content = m.overlaySearch(content, w, h)
+	}
+	v := tea.NewView(content)
 	v.AltScreen = true
 	v.KeyboardEnhancements.ReportAlternateKeys = true
 	if m.mouse {
@@ -513,7 +566,8 @@ func (m model) header(width int) string {
 // ones. Each hint shows the keys its actions are bound to, and a hint whose
 // actions have no keys is left out. The editing keys are left to the README:
 // four hints is what fits in 80 columns. After a close or a quit that could
-// not save, the footer asks for it again instead.
+// not save, the footer asks for it again instead. While the search popup is
+// open, the footer shows the popup's keys instead.
 func (m model) footer(width int) string {
 	var parts []string
 	add := func(label string, ids ...keymap.ID) {
@@ -522,6 +576,15 @@ func (m model) footer(width int) string {
 		}
 	}
 	switch {
+	case m.search != nil:
+		label := "Go to"
+		if m.search.doc == nil {
+			label = "Open"
+		}
+		add(label, searchOpen)
+		add("Move", searchUp, searchDown)
+		add("Close", searchClose)
+		return ansi.Truncate(" "+strings.Join(parts, "  "), width, "")
 	case m.confirm == actCloseTab:
 		return m.prompt("Close anyway", width)
 	case m.confirm == actQuit:

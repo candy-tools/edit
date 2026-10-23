@@ -635,7 +635,7 @@ func TestSingleLabelLeavesSequencesOut(t *testing.T) {
 // with o when the view is a scope where keys type text, one per line, or ""
 // when there are none.
 func typingProblems(o overrides) string {
-	if _, err := New(testActions(), o, "view"); err != nil {
+	if _, err := New(testActions(), o, Scope{Name: "view", Typing: true}); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -690,13 +690,133 @@ func TestWithoutATypingScopeGlobalLettersAreFine(t *testing.T) {
 	}
 }
 
-func TestATypingScopeMustHaveActions(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Error("New should panic on a typing scope no action is in")
+func TestNewPanicsOnABadScope(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		scopes []Scope
+	}{
+		{"the global scope", []Scope{{Name: Global, Modal: true}}},
+		{"a scope no action is in", []Scope{{Name: "viwe", Typing: true}}},
+		{"a scope given twice", []Scope{{Name: "view", Typing: true}, {Name: "view", Modal: true}}},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: New should panic", c.name)
+				}
+			}()
+			_, _ = New(testActions(), cleanView("down"), c.scopes...)
+		}()
+	}
+}
+
+// The actions of a program with a popup: the small program's, a global
+// close on esc esc, and a popup that takes every key, closed with esc.
+var (
+	paneClose  = ID{Global, "close"}
+	popupClose = ID{"popup", "close"}
+	popupOpen  = ID{"popup", "open"}
+)
+
+// popup says the popup's scope is modal, and that keys type text there.
+var popup = Scope{Name: "popup", Typing: true, Modal: true}
+
+// popupActions returns the popup program's actions with their default keys.
+func popupActions() []Action {
+	return append(testActions(),
+		Action{ID: paneClose, Keys: []string{"esc esc"}},
+		Action{ID: popupClose, Keys: []string{"esc"}},
+		Action{ID: popupOpen, Keys: []string{"enter", "ctrl+pgdown"}},
+	)
+}
+
+func TestAModalScopeTakesEveryKey(t *testing.T) {
+	m, err := New(popupActions(), nil, popup)
+	if err != nil {
+		t.Fatalf("a modal scope's keys may be bound, and start sequences, in the global scope too: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		msg  tea.KeyPressMsg
+		want ID // the zero ID for none
+	}{
+		{"esc, which starts esc esc in the global scope", press(tea.KeyEscape, 0), popupClose},
+		{"a key a global action has too", press(tea.KeyPgDown, tea.ModCtrl), popupOpen},
+		{"its own key", press(tea.KeyEnter, 0), popupOpen},
+		{"a global key", press('q', tea.ModCtrl), ID{}},
+	} {
+		id, next, ok := m.Lookup("popup", "", c.msg)
+		if id != c.want || ok != (c.want != ID{}) || next != "" {
+			t.Errorf("%s: Lookup = %v, %q, %t; want %v", c.name, id, next, ok, c.want)
 		}
-	}()
-	_, _ = New(testActions(), cleanView("down"), "viwe")
+	}
+	if _, next, _ := m.Lookup("list", "", press(tea.KeyEscape, 0)); next != "esc" {
+		t.Errorf("in the list, esc should still start esc esc: next = %q", next)
+	}
+}
+
+// A key that starts a sequence in the global scope starts nothing in a modal
+// scope that doesn't bind it, where the global sequences are not active.
+func TestAModalScopeStartsNoGlobalSequence(t *testing.T) {
+	m, err := New(popupActions(), overrides{"popup": {"close": {"ctrl+g"}}}, popup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, pending string }{
+		{"the start of esc esc", ""},
+		{"the end of esc esc", "esc"},
+	} {
+		id, next, ok := m.Lookup("popup", c.pending, press(tea.KeyEscape, 0))
+		if id != (ID{}) || ok || next != "" {
+			t.Errorf("%s: Lookup = %v, %q, %t; want nothing", c.name, id, next, ok)
+		}
+	}
+}
+
+func TestAModalScopesKeysClashOnlyWithEachOther(t *testing.T) {
+	_, err := New(popupActions(), overrides{"popup": {"open": {"esc"}}}, popup)
+	if want := `key "esc" is bound to both popup.close and popup.open`; err == nil || err.Error() != want {
+		t.Errorf("New = %v, want %q", err, want)
+	}
+}
+
+func TestAModalTypingScopeLeavesTheGlobalScopeAlone(t *testing.T) {
+	if _, err := New(popupActions(), overrides{Global: {"next": {"x"}}}, popup); err != nil {
+		t.Errorf("a letter in the global scope is fine when the only typing scope is modal: %v", err)
+	}
+	_, err := New(popupActions(), overrides{"popup": {"open": {"x"}}}, popup)
+	if want := `popup.open: key "x" types text`; err == nil || err.Error() != want {
+		t.Errorf("New = %v, want %q", err, want)
+	}
+}
+
+// Review focus: a fast double esc, which a terminal without the kitty
+// protocol sends as alt+esc, closes a popup bound to esc; a real alt chord
+// does nothing there, and after a pending esc only alt+esc completes
+// esc esc.
+func TestAnAltEscThatDoesNothingIsOneEsc(t *testing.T) {
+	m, err := New(popupActions(), nil, popup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	altEsc := press(tea.KeyEscape, tea.ModAlt)
+	for _, c := range []struct {
+		name           string
+		scope, pending string
+		msg            tea.KeyPressMsg
+		want           ID // the zero ID for none
+	}{
+		{"alt+esc in the popup", "popup", "", altEsc, popupClose},
+		{"alt+x in the popup", "popup", "", press('x', tea.ModAlt), ID{}},
+		{"alt+esc in a pane is esc esc", "list", "", altEsc, paneClose},
+		{"after a pending esc, alt+esc completes esc esc", "list", "esc", altEsc, paneClose},
+		{"after a pending esc, alt+x does nothing", "list", "esc", press('x', tea.ModAlt), ID{}},
+	} {
+		id, next, ok := m.Lookup(c.scope, c.pending, c.msg)
+		if id != c.want || ok != (c.want != ID{}) || next != "" {
+			t.Errorf("%s: Lookup = %v, %q, %t; want %v", c.name, id, next, ok, c.want)
+		}
+	}
 }
 
 func TestTyped(t *testing.T) {

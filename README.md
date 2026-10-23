@@ -7,7 +7,8 @@ sidebar on the left and the open files as tabs on the right.
 > editor pane and key-hint footer. The sidebar browses the workspace as a
 > folder tree and opens files in tabs, where you edit them, with undo and
 > redo, colored by their syntax; edits are saved on their own, in the
-> background. A tab closes with ctrl+w or a double esc, or a click on its
+> background. ctrl+f searches every file of the workspace, or the open
+> one, in a popup. A tab closes with ctrl+w or a double esc, or a click on its
 > `×` once the mouse is turned on. Every key can be rebound, and the colors
 > picked, in a config file.
 
@@ -41,6 +42,7 @@ These, while the file sidebar has focus:
 | `→` | `sidebar.expand` | Expand a folder; on an open folder, step into it |
 | `←` | `sidebar.collapse` | Collapse a folder; elsewhere, go to the parent folder |
 | `enter` | `sidebar.open` | Open a file in a tab, or expand / collapse a folder |
+| `ctrl+f` | `sidebar.search` | Search every file of the workspace: see [Search](#search) |
 
 And these, while the editor has focus:
 
@@ -58,6 +60,7 @@ And these, while the editor has focus:
 | `ctrl+k` | `editor.delete-line` | Delete the cursor's line |
 | `ctrl+z` | `editor.undo` | Undo the last edit |
 | `ctrl+shift+z`, `ctrl+y` | `editor.redo` | Redo the last edit undo took back |
+| `ctrl+f` | `editor.search` | Search the file: see [Search](#search) |
 
 Any other character key types itself, and pasted text goes in at the cursor.
 `esc esc` is esc pressed twice, the second time within half a second of the
@@ -128,6 +131,47 @@ or `python`. Other files are drawn without colors.
   A parse that takes over 2 s stops, and the file keeps the colors it had.
 - The `theme` setting picks the colors: see [Configuration](#configuration).
 
+### Search
+
+ctrl+f opens a search popup over the panes: from the file sidebar it
+searches every file of the workspace, from the editor the file of the
+active tab. The matches are listed as you type, one row per match: where
+it is — the file's path and the line, or just the line — then the line,
+the match highlighted. enter goes to the match on the row with the `❯`:
+it opens its file, or switches to the file's tab, and puts the cursor at
+the start of the match. Pressed before the matches of what you just typed
+are listed, enter waits for them.
+
+| Key | Action | Does |
+|-----|--------|------|
+| `↑` / `↓` | `search.up` / `search.down` | Move to the match above / below |
+| `pgup` / `pgdown` | `search.page-up` / `search.page-down` | Move a page up / down |
+| `←` / `→` | `search.left` / `search.right` | Move the query's cursor a character |
+| `home` / `end` | `search.line-start` / `search.line-end` | Go to the start / end of the query |
+| `backspace`, `ctrl+h` | `search.delete-left` | Delete the character before the query's cursor |
+| `delete` | `search.delete-right` | Delete the character under the query's cursor |
+| `enter` | `search.open` | Go to the match |
+| `esc`, `ctrl+c` | `search.close` | Close the popup |
+
+- **The query** is found as you type it, with smart case: with only small
+  letters it ignores case — `keymap` finds `Keymap` too — and a capital
+  makes it exact. A paste types into it, its line breaks as spaces.
+- **The popup opens with the last query**, selected: typing replaces it,
+  backspace clears it. From the editor the list starts on the first match
+  after the cursor, so ctrl+f then enter goes to the next match.
+- **While it is open** the popup takes every key: the panes' keys and the
+  global ones, ctrl+q among them, wait until it closes, and the mouse
+  does nothing.
+- **The workspace search** starts once you stop typing for a tenth of a
+  second, and lists the matches as it finds them, in the sidebar's order.
+  It stops at 1,000 matches, a file's search at 10,000; the count then
+  ends in `+`.
+- **It skips** `.git`; what git ignores, as the `.gitignore` files of the
+  workspace and of the folders above it up to its repository's root, and
+  `.git/info/exclude`, say — a file git tracks too, unlike git; symlinks;
+  binary files and files over 10 MB; and what it can't read. A file open
+  in a tab is searched as the tab holds it, unsaved edits and all.
+
 ## Configuration
 
 edit reads its settings from `config.yaml` in an `edit` folder of your config
@@ -169,9 +213,10 @@ by default, since while edit has it, the terminal's own text selection takes
 shift and a drag instead of a plain drag. Off, the terminal keeps the mouse,
 and most terminals turn the wheel into ↑ and ↓.
 
-`shortcuts` rebinds keys. It has three scopes: `global`, whose actions work
-in either pane, `sidebar` and `editor`. Each scope maps action names, from
-the tables above, to a key or a list of keys:
+`shortcuts` rebinds keys. It has four scopes: `global`, whose actions work
+in either pane, `sidebar`, `editor`, and `search`, whose actions work in
+the search popup, where the global ones don't. Each scope maps action
+names, from the tables above, to a key or a list of keys:
 
 ```yaml
 shortcuts:
@@ -191,7 +236,7 @@ shortcuts:
 
 - Listing an action replaces all of its default keys; the actions you don't
   list keep theirs. So `close-tab: ctrl+x` frees `ctrl+w` and `esc esc`.
-- `[]` unbinds an action. `quit` must keep at least one key.
+- `[]` unbinds an action. `quit` and `search.close` must keep at least one key.
 - A key can be a sequence: keys pressed one after the other, with a space
   between them, such as `esc esc` or `ctrl+k w`. Each key of a sequence
   must come within half a second of the one before; a key that goes on with
@@ -200,12 +245,14 @@ shortcuts:
   share a key, and neither can a `global` action and a pane's. Nor can a key
   start a sequence of another action where both work: with `esc esc` on
   `close-tab`, `esc` alone can't be bound. The same key in `sidebar` and
-  `editor` is fine, since only one pane has focus.
+  `editor` is fine, since only one pane has focus. `search` stands apart:
+  the global actions don't work in the popup, so its keys can be the global
+  ones too, `esc` among them.
 - Keys that type text — a single character, or `space` — can't be bound in
-  `editor`, where they type, nor in `global`, whose actions work in the
-  editor too, and can't start a sequence there; after a sequence's first
-  key, they can go on with it: `ctrl+k w`. `alt+` and `ctrl+` keys are fine
-  there, and letters are fine in `sidebar`.
+  `editor` or `search`, where they type, nor in `global`, whose actions work
+  in the editor too, and can't start a sequence there; after a sequence's
+  first key, they can go on with it: `ctrl+k w`. `alt+` and `ctrl+` keys are
+  fine there, and letters are fine in `sidebar`.
 - The first key of an action is the one the footer shows. When closing or
   quitting asks again, the footer shows the first that isn't a sequence.
 - A YAML anchor lets scopes share a list: `down: &down [down, j]` in
@@ -260,7 +307,8 @@ The other way round, a terminal without the kitty protocol sends alt and a
 key as esc then the key, so esc and a key pressed at once — a quick
 `esc esc` — reach edit as alt and that key, `alt+esc`. When alt and that
 key are bound to nothing, edit takes them as esc then the key, so `esc esc`
-closes a tab however fast you press it.
+closes a tab however fast you press it. In the search popup, a fast double
+esc closes the popup, its second esc dropped.
 
 A mistake in the file stops edit before it starts, with a message that names
 the file and lists every problem:
@@ -338,9 +386,10 @@ make verify       # all of the above plus the license check
 ```
 
 Packages under `libs/` (`libs/treeview`, `libs/tabset`, `libs/textedit`,
-`libs/keymap`, `libs/syntax` and `libs/syntax/treesitter`) are app-agnostic:
-they must never import `app/` or `internal/`. A depguard rule in
-`.golangci.yaml` enforces this, so `make lint` fails on a wrong-way import.
+`libs/keymap`, `libs/syntax`, `libs/syntax/treesitter`, `libs/gitignore`,
+`libs/grep` and `libs/picker`) are app-agnostic: they must never import
+`app/` or `internal/`. A depguard rule in `.golangci.yaml` enforces this,
+so `make lint` fails on a wrong-way import.
 
 ### Syntax colors
 

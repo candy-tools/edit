@@ -72,3 +72,10 @@ func compareEntries(a, b entry) int {
 		strings.Compare(a.name, b.name),
 	)
 }
+
+// compareDirEntries orders a folder's entries for the workspace search as
+// the sidebar lists them: folders first, then by name, as compareEntries
+// does. The search leaves symlinks out, so an entry's own type is enough.
+func compareDirEntries(a, b fs.DirEntry) int {
+	return compareEntries(entry{name: a.Name(), dir: a.IsDir()}, entry{name: b.Name(), dir: b.IsDir()})
+}

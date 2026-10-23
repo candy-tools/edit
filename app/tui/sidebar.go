@@ -13,7 +13,7 @@ import (
 // sidebarBody draws the file tree's scroll window for the sidebar box.
 func (m model) sidebarBody() string {
 	rows, cursor := m.files.Window()
-	return treeLines(rows, cursor, m.focus == paneSidebar)
+	return treeLines(rows, cursor, m.focused(paneSidebar))
 }
 
 // sidebarAction applies an action of the sidebar to the file tree: up, down,

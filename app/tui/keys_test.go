@@ -22,6 +22,7 @@ var defaultKeys = map[string][]string{
 	"sidebar.expand":      {"right"},
 	"sidebar.collapse":    {"left"},
 	"sidebar.open":        {"enter"},
+	"sidebar.search":      {"ctrl+f"},
 	"editor.left":         {"left"},
 	"editor.right":        {"right"},
 	"editor.up":           {"up"},
@@ -39,6 +40,19 @@ var defaultKeys = map[string][]string{
 	"editor.delete-line":  {"ctrl+k"},
 	"editor.undo":         {"ctrl+z"},
 	"editor.redo":         {"ctrl+shift+z", "ctrl+y"},
+	"editor.search":       {"ctrl+f"},
+	"search.up":           {"up"},
+	"search.down":         {"down"},
+	"search.page-up":      {"pgup"},
+	"search.page-down":    {"pgdown"},
+	"search.left":         {"left"},
+	"search.right":        {"right"},
+	"search.line-start":   {"home"},
+	"search.line-end":     {"end"},
+	"search.delete-left":  {"backspace", "ctrl+h"},
+	"search.delete-right": {"delete"},
+	"search.open":         {"enter"},
+	"search.close":        {"esc", "ctrl+c"},
 }
 
 func TestTheDefaultKeys(t *testing.T) {
@@ -78,8 +92,9 @@ func TestQuitMustKeepAKey(t *testing.T) {
 	}
 }
 
-// Keys type text in the editor, so a letter can't be bound there, nor in
-// the global scope, whose actions work in the editor too.
+// Keys type text in the editor and in the search popup's query, so a letter
+// can't be bound there, nor in the global scope, whose actions work in the
+// editor too.
 func TestLettersCantBeBoundWhereTheyType(t *testing.T) {
 	for _, c := range []struct {
 		o    map[string]map[string][]string
@@ -88,6 +103,7 @@ func TestLettersCantBeBoundWhereTheyType(t *testing.T) {
 		{map[string]map[string][]string{"editor": {"down": {"j"}}}, `editor.down: key "j" types text`},
 		{map[string]map[string][]string{"global": {"quit": {"q"}}}, `global.quit: key "q" types text`},
 		{map[string]map[string][]string{"editor": {"delete-line": {"space"}}}, `editor.delete-line: key "space" types text`},
+		{map[string]map[string][]string{"search": {"open": {"x"}}}, `search.open: key "x" types text`},
 	} {
 		if _, err := NewKeymap(c.o); err == nil || err.Error() != c.want {
 			t.Errorf("NewKeymap(%v) = %v, want %q", c.o, err, c.want)

@@ -45,6 +45,9 @@ var (
 	headerHintSty  = lipgloss.NewStyle().Foreground(colDim)
 	// warnStyle draws the header's warning that a tab can't be saved.
 	warnStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	// matchStyle draws a match in the search popup's rows: accented, and
+	// bold and underlined, which show without colours too.
+	matchStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true).Underline(true)
 )
 
 // borderStyle colours a pane's border: accent when the pane has focus, dim

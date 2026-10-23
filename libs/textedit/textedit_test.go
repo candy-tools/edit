@@ -150,11 +150,12 @@ func FuzzRoundTrip(f *testing.F) {
 // the text its steps hold is right — undo and redo among the edits.
 func FuzzEdits(f *testing.F) {
 	f.Add("ab\ncd", []byte{0, 1, 2, 3, 9, 10, 13, 14, 15, 16})
-	f.Add("e\U00000301\xff\t日👨👩\r\nx", []byte{1, 1, 1, 12, 5, 0, 13, 11, 7, 6, 0x50})
-	f.Add(numbered(9), []byte{9, 15, 15, 7, 6, 0xd0, 3, 15})
+	f.Add("e\U00000301\xff\t日👨👩\r\nx", []byte{1, 1, 1, 12, 5, 0, 13, 11, 7, 6, 0x54})
+	f.Add(numbered(9), []byte{9, 15, 15, 7, 6, 0xda, 3, 15})
 	f.Add("a\r\nb\r\n", []byte{15, 11, 10, 9, 15, 13, 14, 15})
 	f.Add("ab\ncd", []byte{10, 10, 17, 18, 13, 13, 17, 17, 18, 15, 17, 11, 18})
 	f.Add("a\r\nb\nc", []byte{5, 13, 17, 15, 17, 18, 18, 12, 17})
+	f.Add("ab\ncd\n日本", []byte{19, 139, 219, 10, 17, 18, 59})
 	f.Fuzz(func(t *testing.T, text string, ops []byte) {
 		b := sized(text, 7, 3)
 		changes := record(b)
@@ -325,8 +326,8 @@ func TestLineTextAndSize(t *testing.T) {
 
 // edit applies to b the move, edit, resize, undo or redo op picks; an op
 // below 17 is no undo or redo.
-func edit(b *Buffer, op byte) {
-	switch op % 19 {
+func edit(b *Buffer, op byte) { //nolint:gocyclo // a flat switch with one case per op
+	switch op % 20 {
 	case 0:
 		b.Left()
 	case 1:
@@ -365,6 +366,8 @@ func edit(b *Buffer, op byte) {
 		b.Undo()
 	case 18:
 		b.Redo()
+	case 19:
+		b.Goto(int(op>>5)%4-1, int(op>>2)%7-1)
 	}
 }
 
@@ -1080,4 +1083,58 @@ func TestWindowClassifiesTheCellsItDraws(t *testing.T) {
 	if want := [][2]int{{0, 5}, {0, 6}, {0, 7}}; !slices.Equal(calls, want) {
 		t.Errorf("calls %v, want %v: none for cells left of the window or past the end", calls, want)
 	}
+}
+
+func TestGoto(t *testing.T) {
+	b := sized("ab\ncdef\n日本\ne\U00000301x", 10, 5)
+	for _, c := range []struct {
+		name              string
+		line, offset      int
+		wantLine, wantOff int
+	}{
+		{"a place", 1, 2, 1, 2},
+		{"the end of a line", 1, 4, 1, 4},
+		{"an offset past the end", 0, 9, 0, 2},
+		{"a negative offset", 1, -3, 1, 0},
+		{"a line past the last", 7, 3, 3, 3},
+		{"a negative line", -2, 1, 0, 1},
+		{"inside a wide character", 2, 4, 2, 3},
+		{"inside a cluster", 3, 1, 3, 0},
+	} {
+		b.Goto(c.line, c.offset)
+		if l, o := b.Cursor(); l != c.wantLine || o != c.wantOff {
+			t.Errorf("%s: Goto(%d, %d) put the cursor at line %d offset %d, want line %d offset %d",
+				c.name, c.line, c.offset, l, o, c.wantLine, c.wantOff)
+		}
+	}
+}
+
+func TestGotoCentersALineOutOfView(t *testing.T) {
+	b := sized(numbered(100), 10, 5)
+	b.Goto(50, 0)
+	checkRows(t, b, 48, "l48", "l49", "l50", "l51", "l52")
+	b.Goto(52, 1) // in view: the window stays
+	checkRows(t, b, 48, "l48", "l49", "l50", "l51", "l52")
+	b.Goto(99, 0) // no empty space below the last line
+	checkRows(t, b, 95, "l95", "l96", "l97", "l98", "l99")
+	b.Goto(1, 0)
+	checkRows(t, b, 0, "l0", "l1", "l2", "l3", "l4")
+}
+
+func TestGotoEndsTheOpenUndoStep(t *testing.T) {
+	b := sized("abc", 10, 3)
+	typeIn(b, "xy")
+	b.Goto(0, 2) // where the typing is: still a move, which ends the step
+	typeIn(b, "z")
+	undoes(t, b, "xyabc", "abc")
+}
+
+func TestAVerticalMoveAfterGotoAimsAtItsColumn(t *testing.T) {
+	b := sized("abcd\ne\nfghi", 10, 3)
+	b.Goto(2, 1)
+	b.Up() // a run of vertical moves, aiming at column 1
+	b.Goto(0, 3)
+	b.Down()
+	b.Down()
+	checkCursor(t, b, 2, 3)
 }

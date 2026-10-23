@@ -222,6 +222,35 @@ func (b *Buffer) Bottom() {
 	b.moved()
 }
 
+// Goto moves the cursor to byte offset of line, both clamped to the text,
+// onto the start of the cell that holds it. It ends a run of vertical moves
+// and the open undo step, as every move does. When line is out of the
+// window, the window scrolls to show it in its middle; otherwise it moves as
+// little as needed to show the cursor, as after any move.
+func (b *Buffer) Goto(line, offset int) {
+	b.line = min(max(line, 0), len(b.lines)-1)
+	b.offset = b.cellStart(b.lines[b.line], offset)
+	if b.line < b.top || b.line >= b.top+b.height {
+		b.top = b.line - b.height/2
+	}
+	b.moved()
+}
+
+// cellStart returns the offset in line s of the start of the cell that
+// holds offset off: the start of s for an offset before it, and the end of
+// s for one at or past it.
+func (b *Buffer) cellStart(s string, off int) int {
+	start := 0
+	for start < len(s) {
+		size, _, _ := b.cell(s[start:], 0)
+		if start+size > off {
+			return start
+		}
+		start += size
+	}
+	return len(s)
+}
+
 // moved ends every move but the vertical ones: it ends a run of vertical
 // moves and the open undo step, and moves the window to show the cursor.
 func (b *Buffer) moved() {
