@@ -1,6 +1,11 @@
 package tui
 
-import "github.com/candy-tools/edit/libs/keymap"
+import (
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/candy-tools/edit/libs/keymap"
+)
 
 // The scopes of edit's actions, next to keymap.Global: the pane with focus
 // decides which of them is active. Keys type text in the editor.
@@ -47,16 +52,16 @@ var (
 )
 
 // actions are edit's actions with their default keys. quit must keep a key,
-// so the config can't lock you in. ctrl+h deletes left too, since some
-// terminals send it for backspace. ctrl+shift+z only reaches edit from a
-// terminal that reports it; where it arrives as ctrl+z, it undoes, so redo
-// has ctrl+y too.
+// so the config can't lock you in. A double esc closes a tab too. ctrl+h
+// deletes left too, since some terminals send it for backspace.
+// ctrl+shift+z only reaches edit from a terminal that reports it; where it
+// arrives as ctrl+z, it undoes, so redo has ctrl+y too.
 var actions = []keymap.Action{
 	{ID: actQuit, Keys: []string{"ctrl+q", "ctrl+c"}, Required: true},
 	{ID: actSwitchFocus, Keys: []string{"shift+tab"}},
 	{ID: actNextTab, Keys: []string{"ctrl+pgdown"}},
 	{ID: actPreviousTab, Keys: []string{"ctrl+pgup"}},
-	{ID: actCloseTab, Keys: []string{"ctrl+w"}},
+	{ID: actCloseTab, Keys: []string{"ctrl+w", "esc esc"}},
 
 	{ID: sidebarUp, Keys: []string{"up"}},
 	{ID: sidebarDown, Keys: []string{"down"}},
@@ -85,6 +90,21 @@ var actions = []keymap.Action{
 	{ID: editorDeleteLine, Keys: []string{"ctrl+k"}},
 	{ID: editorUndo, Keys: []string{"ctrl+z"}},
 	{ID: editorRedo, Keys: []string{"ctrl+shift+z", "ctrl+y"}},
+}
+
+// sequenceTimeout is how long a sequence waits for its next key, as long as
+// a double-click may take: the second esc of a double esc must come within
+// it.
+const sequenceTimeout = 500 * time.Millisecond
+
+// sequenceTimeoutMsg ends the wait for a sequence's next key that key press
+// press started.
+type sequenceTimeoutMsg struct{ press int }
+
+// sequenceTimer returns the command that delivers press's
+// sequenceTimeoutMsg, sequenceTimeout from now.
+func sequenceTimer(press int) tea.Cmd {
+	return tea.Tick(sequenceTimeout, func(time.Time) tea.Msg { return sequenceTimeoutMsg{press} })
 }
 
 // NewKeymap builds edit's keymap: each action's default keys, except that

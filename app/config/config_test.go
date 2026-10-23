@@ -223,6 +223,28 @@ func TestLoadTheTheme(t *testing.T) {
 	}
 }
 
+func TestLoadTheMouse(t *testing.T) {
+	for text, want := range map[string]bool{
+		"mouse: true\n":               true,
+		"mouse: True\n":               true,
+		"mouse: false\n":              false,
+		"theme: dracula\n":            false, // off unless the file turns it on
+		"mouse: true\ntheme: candy\n": true,
+	} {
+		if cfg, err := load(t, text); err != nil || cfg.Mouse != want {
+			t.Errorf("%q: Load = %t, %v; want mouse %t", text, cfg.Mouse, err, want)
+		}
+	}
+}
+
+func TestLoadAMouseThatIsNeitherTrueNorFalse(t *testing.T) {
+	for _, text := range []string{"mouse:\n", "mouse: ~\n", "mouse: yes\n", "mouse: 1\n", "mouse: \"true\"\n", "mouse: [true]\n"} {
+		if _, err := load(t, text); err == nil || err.Error() != "mouse: want true or false" {
+			t.Errorf("%q: Load = %v, want mouse: want true or false", text, err)
+		}
+	}
+}
+
 func TestLoadAThemeThatIsNoName(t *testing.T) {
 	for _, text := range []string{"theme:\n", "theme: ~\n", "theme: [dracula]\n", "theme: {name: dracula}\n"} {
 		if _, err := load(t, text); err == nil || err.Error() != "theme: want a theme name" {

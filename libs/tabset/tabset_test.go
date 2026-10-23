@@ -66,7 +66,7 @@ func checkRow(t *testing.T, s *Set[string, int], want string) {
 
 func TestEmptySet(t *testing.T) {
 	s, _ := newSet(10)
-	s.Close()
+	s.Close("a")
 	s.Next()
 	s.Prev()
 	if s.Len() != 0 {
@@ -106,7 +106,7 @@ func TestOpenAnOpenKeyOnlyActivatesIt(t *testing.T) {
 	}
 }
 
-func TestCloseActivatesTheRightNeighbour(t *testing.T) {
+func TestClosingTheActiveTabActivatesItsRightNeighbour(t *testing.T) {
 	s, _ := newSet(100, "a", "b", "c")
 	s.Prev() // b
 	for _, want := range []string{
@@ -114,9 +114,25 @@ func TestCloseActivatesTheRightNeighbour(t *testing.T) {
 		"| [a] |",   // c was the last: its left neighbour
 		"",          // the only tab
 	} {
-		s.Close()
+		active, _ := s.Active()
+		s.Close(active.Key)
 		checkRow(t, s, want)
 	}
+}
+
+func TestClosingAnotherTabKeepsTheActiveOne(t *testing.T) {
+	s, _ := newSet(100, "a", "b", "c", "d")
+	s.Prev() // c
+	s.Close("a")
+	checkRow(t, s, "| b [c] d |")
+	s.Close("d")
+	checkRow(t, s, "| b [c] |")
+}
+
+func TestClosingAKeyNoTabHasDoesNothing(t *testing.T) {
+	s, _ := newSet(100, "a", "b")
+	s.Close("x")
+	checkRow(t, s, "| a [b] |")
 }
 
 func TestNextAndPrevWrapAround(t *testing.T) {
@@ -146,8 +162,8 @@ func TestASingleTabStaysActive(t *testing.T) {
 
 func TestMeasureSeesEveryTabAfterEachChange(t *testing.T) {
 	s, m := newSet(100, "a", "b")
-	s.Next()
-	s.Close()
+	s.Next() // a
+	s.Close("a")
 	s.SetWidth(50)
 	want := [][]string{{}, {"a"}, {"a", "b"}, {"a", "b"}, {"b"}, {"b"}}
 	if !slices.EqualFunc(m.calls, want, slices.Equal[[]string]) {
@@ -179,7 +195,7 @@ func TestWindowMovesOnlyAsFarAsNeeded(t *testing.T) {
 
 func TestWindowPullsBackAfterAClose(t *testing.T) {
 	s, _ := newSet(6, "aa", "bb", "cc", "dd", "ee")
-	s.Close() // ee: without the pull-back the strip would show just cc and dd
+	s.Close("ee") // without the pull-back the strip would show just cc and dd
 	checkRow(t, s, "aa | bb cc [dd] |")
 }
 

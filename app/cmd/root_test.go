@@ -17,7 +17,7 @@ import (
 )
 
 // stubTUI swaps the TUI launcher for fn for the duration of the test.
-func stubTUI(t *testing.T, fn func(root string, keys *keymap.Map, theme tui.Theme, colors colorprofile.Profile) error) {
+func stubTUI(t *testing.T, fn func(root string, keys *keymap.Map, theme tui.Theme, colors colorprofile.Profile, mouse bool) error) {
 	t.Helper()
 	orig := runTUI
 	runTUI = fn
@@ -65,6 +65,7 @@ type started struct {
 	keys   *keymap.Map
 	theme  tui.Theme
 	colors colorprofile.Profile
+	mouse  bool
 }
 
 // execute runs edit with args, the TUI stubbed, and returns what the TUI
@@ -72,8 +73,8 @@ type started struct {
 func execute(t *testing.T, args ...string) (*started, error) {
 	t.Helper()
 	var s *started
-	stubTUI(t, func(_ string, keys *keymap.Map, theme tui.Theme, colors colorprofile.Profile) error {
-		s = &started{keys: keys, theme: theme, colors: colors}
+	stubTUI(t, func(_ string, keys *keymap.Map, theme tui.Theme, colors colorprofile.Profile, mouse bool) error {
+		s = &started{keys: keys, theme: theme, colors: colors, mouse: mouse}
 		return nil
 	})
 	c := newRootCommand()
@@ -114,7 +115,7 @@ func TestRootMeta(t *testing.T) {
 func TestRootOpensWorkingDir(t *testing.T) {
 	noUserConfig(t)
 	var got string
-	stubTUI(t, func(root string, _ *keymap.Map, _ tui.Theme, _ colorprofile.Profile) error {
+	stubTUI(t, func(root string, _ *keymap.Map, _ tui.Theme, _ colorprofile.Profile, _ bool) error {
 		got = root
 		return nil
 	})
@@ -135,7 +136,7 @@ func TestRootOpensWorkingDir(t *testing.T) {
 func TestRootReturnsTUIError(t *testing.T) {
 	noUserConfig(t)
 	boom := errors.New("boom")
-	stubTUI(t, func(string, *keymap.Map, tui.Theme, colorprofile.Profile) error { return boom })
+	stubTUI(t, func(string, *keymap.Map, tui.Theme, colorprofile.Profile, bool) error { return boom })
 	c := newRootCommand()
 	c.SetArgs([]string{})
 	if err := c.Execute(); !errors.Is(err, boom) {
@@ -156,6 +157,9 @@ func TestRootWithoutAConfigFileUsesTheDefaults(t *testing.T) {
 	if got := s.theme.Name(); got != "candy" {
 		t.Errorf("theme %q, want the default candy", got)
 	}
+	if s.mouse {
+		t.Error("the mouse is on, want it off by default")
+	}
 }
 
 func TestRootWithoutAConfigDirectoryUsesTheDefaults(t *testing.T) {
@@ -175,7 +179,7 @@ func TestRootWithoutAConfigDirectoryUsesTheDefaults(t *testing.T) {
 
 func TestRootReadsTheConfigFile(t *testing.T) {
 	terminal(t, colorprofile.ANSI256)
-	writeFile(t, noUserConfig(t), "shortcuts:\n  sidebar:\n    down: [j, down]\ntheme: dracula\n")
+	writeFile(t, noUserConfig(t), "shortcuts:\n  sidebar:\n    down: [j, down]\ntheme: dracula\nmouse: true\n")
 	s, err := execute(t)
 	if err != nil {
 		t.Fatal(err)
@@ -185,6 +189,9 @@ func TestRootReadsTheConfigFile(t *testing.T) {
 	}
 	if got := s.theme.Name(); got != "dracula" {
 		t.Errorf("theme %q, want dracula from the config file", got)
+	}
+	if !s.mouse {
+		t.Error("the mouse is off, want it on from the config file")
 	}
 }
 

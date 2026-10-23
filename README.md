@@ -7,8 +7,9 @@ sidebar on the left and the open files as tabs on the right.
 > editor pane and key-hint footer. The sidebar browses the workspace as a
 > folder tree and opens files in tabs, where you edit them, with undo and
 > redo, colored by their syntax; edits are saved on their own, in the
-> background. Every key can be rebound, and the colors picked, in a config
-> file.
+> background. A tab closes with ctrl+w or a double esc, or a click on its
+> `×` once the mouse is turned on. Every key can be rebound, and the colors
+> picked, in a config file.
 
 Built with the [Charm](https://charm.sh) stack: [Bubble Tea](https://github.com/charmbracelet/bubbletea)
 and [Lipgloss](https://github.com/charmbracelet/lipgloss), with [Cobra](https://github.com/spf13/cobra)
@@ -27,7 +28,7 @@ These keys work in either pane:
 |-----|--------|------|
 | `shift+tab` | `global.switch-focus` | Switch focus between the file sidebar and the editor |
 | `ctrl+pgdown` / `ctrl+pgup` | `global.next-tab` / `global.previous-tab` | Switch to the next / previous tab, wrapping around |
-| `ctrl+w` | `global.close-tab` | Save and close the active tab |
+| `ctrl+w`, `esc esc` | `global.close-tab` | Save and close the active tab |
 | `ctrl+q` / `ctrl+c` | `global.quit` | Save every tab and quit |
 
 These, while the file sidebar has focus:
@@ -59,6 +60,8 @@ And these, while the editor has focus:
 | `ctrl+shift+z`, `ctrl+y` | `editor.redo` | Redo the last edit undo took back |
 
 Any other character key types itself, and pasted text goes in at the cursor.
+`esc esc` is esc pressed twice, the second time within half a second of the
+first; a single esc does nothing.
 ctrl+shift+z only reaches edit from a terminal that reports it — see
 [Keys your terminal must report](#keys-your-terminal-must-report); where it
 arrives as ctrl+z, it undoes, and ctrl+y redoes.
@@ -85,7 +88,10 @@ is never written.
   gets a `⚠` and the header says why; edit keeps retrying every 500 ms.
   Closing or quitting then stops and asks: the same key again closes or
   quits anyway, and the edits that couldn't be saved are lost; any other key
-  cancels. After quitting anyway, edit prints what it couldn't save.
+  cancels. esc cancels too, so `esc esc` never closes anyway: its first esc
+  cancels, and its second asks again. With the mouse on, the tab's `×`
+  closes it anyway too. After quitting anyway, edit prints what it couldn't
+  save.
 - **Undo** takes back one step at a time: a word you typed with the spaces,
   tabs or line breaks after it, a run of backspaces, a run of deletes, a
   paste, a deleted line. Moving the cursor ends a step. Redo brings back
@@ -128,10 +134,10 @@ edit reads its settings from `config.yaml` in an `edit` folder of your config
 directory: `~/.config/edit/config.yaml` on Linux (or under `$XDG_CONFIG_HOME`
 when it is set), `~/Library/Application Support/edit/config.yaml` on macOS.
 `--config` names another file. The file is optional: without it, edit uses
-the keys above and the theme `candy`. edit reads it once, at start-up, and
-never writes it.
+the keys above and the theme `candy`, with the mouse off. edit reads it
+once, at start-up, and never writes it.
 
-It has two settings. `theme` picks the colors of the text:
+It has three settings. `theme` picks the colors of the text:
 
 ```yaml
 theme: dracula
@@ -148,6 +154,20 @@ theme: dracula
 A theme sets the color of the text, bold, italics and underline, never the
 background, so each works on your terminal's own. On a terminal without
 colors, or with `NO_COLOR` set, edit draws none, whatever the theme.
+
+`mouse` turns the mouse on:
+
+```yaml
+mouse: true
+```
+
+Each tab then gets a `×`. Clicking it, or middle-clicking anywhere on the
+tab, saves and closes that tab, as `close-tab` does the active one, and
+clicking a tab's name switches to it. The wheel moves the cursor of the pane
+under it, the file tree's or the text's, 3 lines a notch. The mouse is off
+by default, since while edit has it, the terminal's own text selection takes
+shift and a drag instead of a plain drag. Off, the terminal keeps the mouse,
+and most terminals turn the wheel into ↑ and ↓.
 
 `shortcuts` rebinds keys. It has three scopes: `global`, whose actions work
 in either pane, `sidebar` and `editor`. Each scope maps action names, from
@@ -170,16 +190,24 @@ shortcuts:
 ```
 
 - Listing an action replaces all of its default keys; the actions you don't
-  list keep theirs. So `close-tab: ctrl+x` frees `ctrl+w`.
+  list keep theirs. So `close-tab: ctrl+x` frees `ctrl+w` and `esc esc`.
 - `[]` unbinds an action. `quit` must keep at least one key.
+- A key can be a sequence: keys pressed one after the other, with a space
+  between them, such as `esc esc` or `ctrl+k w`. Each key of a sequence
+  must come within half a second of the one before; a key that goes on with
+  no sequence does what it does on its own.
 - A key does one thing wherever it works: two actions of one scope can't
-  share a key, and neither can a `global` action and a pane's. The same key in
-  `sidebar` and `editor` is fine, since only one pane has focus.
+  share a key, and neither can a `global` action and a pane's. Nor can a key
+  start a sequence of another action where both work: with `esc esc` on
+  `close-tab`, `esc` alone can't be bound. The same key in `sidebar` and
+  `editor` is fine, since only one pane has focus.
 - Keys that type text — a single character, or `space` — can't be bound in
   `editor`, where they type, nor in `global`, whose actions work in the
-  editor too. `alt+` and `ctrl+` keys are fine there, and letters are fine in
-  `sidebar`.
-- The first key of an action is the one the footer shows.
+  editor too, and can't start a sequence there; after a sequence's first
+  key, they can go on with it: `ctrl+k w`. `alt+` and `ctrl+` keys are fine
+  there, and letters are fine in `sidebar`.
+- The first key of an action is the one the footer shows. When closing or
+  quitting asks again, the footer shows the first that isn't a sequence.
 - A YAML anchor lets scopes share a list: `down: &down [down, j]` in
   `sidebar`, then `down: *down` in `editor`.
 
@@ -228,6 +256,12 @@ and add a row with the key combination `Z+Ctrl+Shift` and the output
 foot and WezTerm use ctrl+shift+z for shortcuts of their own until you
 unbind it there.
 
+The other way round, a terminal without the kitty protocol sends alt and a
+key as esc then the key, so esc and a key pressed at once — a quick
+`esc esc` — reach edit as alt and that key, `alt+esc`. When alt and that
+key are bound to nothing, edit takes them as esc then the key, so `esc esc`
+closes a tab however fast you press it.
+
 A mistake in the file stops edit before it starts, with a message that names
 the file and lists every problem:
 
@@ -235,6 +269,7 @@ the file and lists every problem:
 config /home/you/.config/edit/config.yaml: invalid shortcuts:
   editor.down: key "j" types text
   editor.up: unknown key "ctrl+uo"
+  key "esc" is bound to sidebar.collapse and starts "esc esc" of global.close-tab
   key "j" is bound to both sidebar.down and sidebar.up
 ```
 

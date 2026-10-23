@@ -36,8 +36,11 @@ var testKeys = func() *keymap.Map {
 // keys, sized to a 100x30 terminal. It must not write: a test that saves
 // edits uses newEditModel.
 func newTestModel() model {
-	return send(newModel("/work/project", testFS, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	return send(newModel("/work/project", testFS, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 }
+
+// noMouse leaves the mouse off, as it is unless the config turns it on.
+const noMouse = false
 
 // noColors is the theme none, for the model tests, where colors don't
 // matter.
@@ -68,7 +71,7 @@ func rebound(t *testing.T, o overrides) *keymap.Map {
 // newReboundModel is newTestModel with the keys o rebinds.
 func newReboundModel(t *testing.T, o overrides) model {
 	t.Helper()
-	return send(newModel("/work/project", testFS, noWrites, rebound(t, o), noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	return send(newModel("/work/project", testFS, noWrites, rebound(t, o), noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 }
 
 // send applies msg and returns the updated model.

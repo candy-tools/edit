@@ -52,7 +52,7 @@ func (s *Set[K, V]) Remeasure() { s.fit() }
 // calls value once and opens a tab holding the result at the right end;
 // value is not called when the tab is already open.
 func (s *Set[K, V]) Open(key K, value func() V) {
-	i := slices.IndexFunc(s.tabs, func(t Tab[K, V]) bool { return t.Key == key })
+	i := s.index(key)
 	if i < 0 {
 		s.tabs = append(s.tabs, Tab[K, V]{Key: key, Value: value()})
 		i = len(s.tabs) - 1
@@ -61,16 +61,26 @@ func (s *Set[K, V]) Open(key K, value func() V) {
 	s.fit()
 }
 
-// Close closes the active tab. The tab that was to its right becomes active
-// or, if it was the rightmost, the one to its left. Closing the only tab
-// leaves the set empty; on an empty set Close does nothing.
-func (s *Set[K, V]) Close() {
-	if s.active < 0 {
+// Close closes the tab with key. When that is the active tab, the tab that
+// was to its right becomes active or, if it was the rightmost, the one to
+// its left; closing another tab leaves the active tab active. Closing the
+// only tab leaves the set empty; a key no open tab has closes nothing.
+func (s *Set[K, V]) Close(key K) {
+	i := s.index(key)
+	if i < 0 {
 		return
 	}
-	s.tabs = slices.Delete(s.tabs, s.active, s.active+1)
-	s.active = min(s.active, len(s.tabs)-1)
+	s.tabs = slices.Delete(s.tabs, i, i+1)
+	if i < s.active || s.active == len(s.tabs) {
+		s.active--
+	}
 	s.fit()
+}
+
+// index returns the index into tabs of the open tab with key, or -1 when no
+// open tab has it.
+func (s *Set[K, V]) index(key K) int {
+	return slices.IndexFunc(s.tabs, func(t Tab[K, V]) bool { return t.Key == key })
 }
 
 // Next activates the tab to the right of the active one, wrapping around from

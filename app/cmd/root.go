@@ -81,7 +81,7 @@ func newRootCommand() *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(*cobra.Command, []string) error {
 			colors := terminalProfile()
-			keys, theme, err := loadSettings(configPath, colors)
+			keys, theme, mouse, err := loadSettings(configPath, colors)
 			if err != nil {
 				return err
 			}
@@ -89,7 +89,7 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTUI(root, keys, theme, colors)
+			return runTUI(root, keys, theme, colors, mouse)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", configUsage())
@@ -108,31 +108,32 @@ func configUsage() string {
 }
 
 // loadSettings builds the keymap and the theme from the config file at path,
-// or at the default location when path is "". There, a missing file, or no
-// config directory at all, means the defaults; a missing file named with
-// --config is an error, so a typo in its path can't go unnoticed. Its errors
-// start "config <path>: ", and an invalid keymap's list its problems, one
-// per line, indented. A theme that doesn't exist is an error on any
-// terminal, but on one without colors — colors, the terminal's profile, is
-// ASCII or less, as NO_COLOR makes any terminal — the theme is none.
-func loadSettings(path string, colors colorprofile.Profile) (*keymap.Map, tui.Theme, error) {
+// or at the default location when path is "", and says whether it turns the
+// mouse on. There, a missing file, or no config directory at all, means the
+// defaults; a missing file named with --config is an error, so a typo in its
+// path can't go unnoticed. Its errors start "config <path>: ", and an
+// invalid keymap's list its problems, one per line, indented. A theme that
+// doesn't exist is an error on any terminal, but on one without colors —
+// colors, the terminal's profile, is ASCII or less, as NO_COLOR makes any
+// terminal — the theme is none.
+func loadSettings(path string, colors colorprofile.Profile) (keys *keymap.Map, theme tui.Theme, mouse bool, err error) {
 	cfg, path, err := loadConfig(path)
 	if err != nil {
-		return nil, tui.Theme{}, err
+		return nil, tui.Theme{}, false, err
 	}
-	keys, err := tui.NewKeymap(cfg.Shortcuts)
+	keys, err = tui.NewKeymap(cfg.Shortcuts)
 	if err != nil {
 		problems := strings.ReplaceAll(err.Error(), "\n", "\n  ")
-		return nil, tui.Theme{}, fmt.Errorf("config %s: invalid shortcuts:\n  %s", path, problems)
+		return nil, tui.Theme{}, false, fmt.Errorf("config %s: invalid shortcuts:\n  %s", path, problems)
 	}
-	theme, err := tui.NewTheme(cfg.Theme)
+	theme, err = tui.NewTheme(cfg.Theme)
 	if err != nil {
-		return nil, tui.Theme{}, fmt.Errorf("config %s: %w", path, err)
+		return nil, tui.Theme{}, false, fmt.Errorf("config %s: %w", path, err)
 	}
 	if colors <= colorprofile.ASCII {
 		theme, err = tui.NewTheme("none")
 	}
-	return keys, theme, err
+	return keys, theme, cfg.Mouse, err
 }
 
 // loadConfig reads the config file at path, or at the default location when

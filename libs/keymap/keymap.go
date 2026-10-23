@@ -8,6 +8,12 @@
 // keyboard protocol as a small z — so the map gives each key press, and each
 // key it is given, one name: see New.
 //
+// An action can also be bound to a sequence of keys, pressed one after the
+// other, written with a space between them ("esc esc", "ctrl+k w"). Its
+// first keys start it, and the caller keeps them until its last key, as
+// Lookup returns them; how long it waits for the next key is up to the
+// caller.
+//
 // A scope can be one where keys type text, such as a text editor's: there a
 // key that types text can't be bound, nor in the global scope, which is
 // active alongside it, and Typed says what a key press types.
@@ -20,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -39,14 +46,15 @@ func (id ID) String() string { return id.Scope + "." + id.Name }
 // Action is one thing a key can do.
 type Action struct {
 	ID
-	Keys     []string // the default keys, first key first
+	Keys     []string // the default keys or sequences, first key first
 	Required bool     // must keep at least one key
 }
 
 // Map is the keys bound to a set of actions. It is read-only once built.
 type Map struct {
-	keys     map[ID][]string          // each action's keys, first key first; absent when it has none
-	bindings map[string]map[string]ID // scope → key → the action the key triggers
+	keys     map[ID][]string            // each action's keys, first key first; absent when it has none
+	bindings map[string]map[string]ID   // scope → key → the action the key triggers
+	starts   map[string]map[string]bool // scope → the starts of its sequences: their first key, first two keys, …
 }
 
 // New binds each of actions to its default keys, except that an action
@@ -64,18 +72,25 @@ type Map struct {
 // a capital letter after a modifier as shift and the small letter, so
 // "shift+ctrl+Z" is "ctrl+shift+z".
 //
+// A sequence is two keys or more with a space between each two, each key
+// spelled as above. A space is part of a key when nothing but modifiers come
+// before it in the key, so "alt+ " is still alt and the space bar.
+//
 // typing names the scopes where keys type text, such as a text editor's. A
 // key that types text — a single character, or the space bar with shift or
-// without — can't be bound in them, nor in the global scope when there are
-// any, since global actions are active alongside them.
+// without — can't be bound in them, nor start a sequence there, nor in the
+// global scope when there are any, since global actions are active
+// alongside them. Such a key can go on with a sequence ("ctrl+k w"): the
+// sequence's start takes it before it types.
 //
 // It returns an error listing every problem, one per line, sorted: a scope
 // or an action in overrides that actions doesn't have, a key that is no key,
 // a key that types text bound where keys type text, a Required action left
-// with no keys, and a key bound to two actions that are active together,
-// because they are in the same scope or one of them is global. The defaults
-// are checked too, since an override can clash with another action's
-// default key.
+// with no keys, a key bound to two actions that are active together,
+// because they are in the same scope or one of them is global, and a key
+// bound to one action that starts a sequence bound to another active with
+// it, which the key would both trigger and start. The defaults are checked
+// too, since an override can clash with another action's default key.
 //
 // An action with an empty scope or name, two actions with the same ID, or a
 // typing scope no action is in, is a bug in the caller: New panics.
@@ -83,7 +98,7 @@ func New(actions []Action, overrides map[string]map[string][]string, typing ...s
 	ids, scopes := index(actions)
 	typed := typingScopes(typing, scopes)
 	problems := unknown(overrides, ids, scopes)
-	m := &Map{keys: map[ID][]string{}, bindings: map[string]map[string]ID{}}
+	m := &Map{keys: map[ID][]string{}, bindings: map[string]map[string]ID{}, starts: map[string]map[string]bool{}}
 	byKey := map[string]map[string][]ID{} // scope → key → the actions it is bound to
 	for scope := range scopes {
 		byKey[scope] = map[string][]ID{}
@@ -98,12 +113,12 @@ func New(actions []Action, overrides map[string]map[string][]string, typing ...s
 			problems = append(problems, a.String()+": needs at least one key")
 		}
 		for _, k := range keys {
-			if _, ok := spell(k); !ok {
-				problems = append(problems, fmt.Sprintf("%s: unknown key %q", a.ID, k))
+			if _, err := spellBinding(k); err != nil {
+				problems = append(problems, a.String()+": "+err.Error())
 				continue
 			}
-			if typed[a.Scope] && typesText(k) {
-				problems = append(problems, fmt.Sprintf("%s: key %q types text", a.ID, k))
+			if first, _, _ := strings.Cut(k, " "); typed[a.Scope] && typesText(first) {
+				problems = append(problems, fmt.Sprintf("%s: key %s types text", a.ID, quoteKey(first, k)))
 				continue
 			}
 			m.keys[a.ID] = append(m.keys[a.ID], k)
@@ -111,6 +126,7 @@ func New(actions []Action, overrides map[string]map[string][]string, typing ...s
 		}
 	}
 	problems = append(problems, conflicts(byKey)...)
+	problems = append(problems, ambiguities(byKey)...)
 	if len(problems) > 0 {
 		slices.Sort(problems)
 		errs := make([]error, 0, len(problems))
@@ -121,8 +137,13 @@ func New(actions []Action, overrides map[string]map[string][]string, typing ...s
 	}
 	for scope, keys := range byKey {
 		m.bindings[scope] = make(map[string]ID, len(keys))
+		m.starts[scope] = map[string]bool{}
 		for k, bound := range keys {
 			m.bindings[scope][k] = bound[0]
+			seq := strings.Split(k, " ")
+			for n := 1; n < len(seq); n++ {
+				m.starts[scope][strings.Join(seq[:n], " ")] = true
+			}
 		}
 	}
 	return m, nil
@@ -203,21 +224,106 @@ func conflicts(byKey map[string]map[string][]ID) []string {
 	return problems
 }
 
-// Lookup returns the action that msg triggers while scope is active: a
-// global action first, then one of scope's. A key bound to nothing triggers
-// none, and neither does any key in an unknown scope. It doesn't change the
-// map, so it is safe to call from a Bubble Tea View.
-func (m *Map) Lookup(scope string, msg tea.KeyPressMsg) (ID, bool) {
-	keys, ok := m.bindings[scope]
-	if !ok {
-		return ID{}, false
+// ambiguities lists the keys bound to an action that start a sequence bound
+// to another, when the two are active together: in the same scope, or one
+// of them global. The key would both trigger its action and start the
+// sequence. byKey is scope → key → the actions the key is bound to. A clash
+// between global actions is found again in every scope, so the caller drops
+// the repeats.
+func ambiguities(byKey map[string]map[string][]ID) []string {
+	var problems []string
+	for scope := range byKey {
+		active := func(k string) []ID {
+			bound := slices.Clone(byKey[scope][k])
+			if scope != Global {
+				bound = append(bound, byKey[Global][k]...)
+			}
+			return bound
+		}
+		for _, keys := range []map[string][]ID{byKey[scope], byKey[Global]} {
+			for k := range keys {
+				seq := strings.Split(k, " ")
+				for n := 1; n < len(seq); n++ {
+					start := strings.Join(seq[:n], " ")
+					for _, short := range active(start) {
+						for _, long := range active(k) {
+							problems = append(problems, fmt.Sprintf("key %q is bound to %s and starts %q of %s", start, short, k, long))
+						}
+					}
+				}
+			}
+		}
 	}
-	k := name(msg.Key())
-	if id, ok := m.bindings[Global][k]; ok {
-		return id, true
+	return problems
+}
+
+// Lookup returns what msg does while scope is active, pressed after
+// pending, the keys of a sequence pressed so far ("" for none): the action
+// it triggers, a global action first, then one of scope's; or, when it goes
+// on with a sequence without ending it, no action and next, the keys of the
+// sequence pressed so far, for the caller to pass to the next Lookup. A key
+// that goes on with no sequence after pending counts on its own. A key
+// bound to nothing triggers none, and neither does any key in an unknown
+// scope. It doesn't change the map, so it is safe to call from a Bubble Tea
+// View.
+//
+// A terminal without the kitty keyboard protocol sends alt and a key as esc
+// then the key, so Bubble Tea decodes esc and a key pressed together, such
+// as a quick double esc, as alt and the key. An alt key that does nothing
+// is therefore taken as esc then the key, if they trigger an action or go on
+// with a sequence: alt+esc as esc esc.
+func (m *Map) Lookup(scope, pending string, msg tea.KeyPressMsg) (id ID, next string, ok bool) {
+	if _, known := m.bindings[scope]; !known {
+		return ID{}, "", false
 	}
-	id, ok := keys[k]
-	return id, ok
+	key := msg.Key()
+	id, next, ok = m.step(scope, pending, name(key))
+	if ok || next != "" || key.Mod&tea.ModAlt == 0 {
+		return id, next, ok
+	}
+	if _, afterEsc, _ := m.step(scope, pending, "esc"); afterEsc != "" {
+		if id, next, ok := m.exact(scope, afterEsc+" "+name(withoutAlt(key))); ok || next != "" {
+			return id, next, ok
+		}
+	}
+	return ID{}, "", false
+}
+
+// step is Lookup for the key named k: what pending and k do, or else what k
+// does on its own.
+func (m *Map) step(scope, pending, k string) (id ID, next string, ok bool) {
+	if pending != "" {
+		if id, next, ok := m.exact(scope, pending+" "+k); ok || next != "" {
+			return id, next, ok
+		}
+	}
+	return m.exact(scope, k)
+}
+
+// exact returns what the keys seq do while scope is active: the action they
+// trigger or, when they start a sequence, seq itself as next.
+func (m *Map) exact(scope, seq string) (id ID, next string, ok bool) {
+	for _, s := range []string{Global, scope} {
+		if id, ok := m.bindings[s][seq]; ok {
+			return id, "", true
+		}
+	}
+	if m.starts[Global][seq] || m.starts[scope][seq] {
+		return ID{}, seq, false
+	}
+	return ID{}, "", false
+}
+
+// withoutAlt is the key k, pressed with alt, as it is pressed without: alt
+// taken off and, for a capital, the text it types put back, which Bubble
+// Tea leaves off a key pressed with alt. Without its text, a capital would
+// be named shift and the small letter.
+func withoutAlt(k tea.Key) tea.Key {
+	k.Mod &^= tea.ModAlt
+	if k.Mod&^locks == tea.ModShift && k.ShiftedCode != 0 {
+		k.Text = string(k.ShiftedCode)
+	}
+	return k
 }
 
 // Typed returns the text msg types where keys type text, and whether it
@@ -245,14 +351,29 @@ func (m *Map) Keys(id ID) []string {
 // "super+", and its base, with an arrow drawn as ↑, ↓, ← or →. When all the
 // keys have the same modifiers, those are written once, then the bases: run
 // together when there are no modifiers and every base is an arrow ("↑↓"),
-// joined with "/" otherwise ("k/j", "ctrl+pgup/pgdown", "alt+←/→"). Otherwise
-// each key is written in full and joined with ", " ("ctrl+pgup, pgdown"), so
+// joined with "/" otherwise ("k/j", "ctrl+pgup/pgdown", "alt+←/→").
+// Otherwise, or when one of the keys is a sequence, each key is written in
+// full and joined with ", " ("ctrl+pgup, pgdown", "ctrl+k p, ctrl+k n"), so
 // the label never shows a shared modifier the keys don't have.
 func (m *Map) Label(ids ...ID) string {
+	return label(ids, func(id ID) []string { return m.keys[id] })
+}
+
+// SingleLabel is Label for the keys of ids that aren't sequences: for a hint
+// whose keys only work pressed on their own, such as the answer to a prompt
+// that the first key of a sequence would cancel.
+func (m *Map) SingleLabel(ids ...ID) string {
+	return label(ids, func(id ID) []string {
+		return slices.DeleteFunc(slices.Clone(m.keys[id]), func(k string) bool { return strings.Contains(k, " ") })
+	})
+}
+
+// label is Label for the keys that keys returns for each of ids.
+func label(ids []ID, keys func(ID) []string) string {
 	var mods, bases []string
-	allArrows := true
+	allArrows, sequence := true, false
 	for _, id := range ids {
-		keys := m.keys[id]
+		keys := keys(id)
 		if len(keys) == 0 {
 			continue
 		}
@@ -262,12 +383,13 @@ func (m *Map) Label(ids ...ID) string {
 		} else {
 			allArrows = false
 		}
+		sequence = sequence || strings.Contains(base, " ")
 		mods, bases = append(mods, mod), append(bases, base)
 	}
 	switch {
 	case len(bases) == 0:
 		return ""
-	case slices.ContainsFunc(mods, func(mod string) bool { return mod != mods[0] }):
+	case sequence || slices.ContainsFunc(mods, func(mod string) bool { return mod != mods[0] }):
 		for i := range bases {
 			bases[i] = mods[i] + bases[i]
 		}
@@ -446,16 +568,72 @@ var specials = func() map[string]rune {
 	return names
 }()
 
-// clean spells keys as spell does and drops the repeats, keeping the first
-// of each. A key that is no key stays as it is written, for New to report.
-func clean(keys []string) []string {
-	var out []string
-	for _, k := range keys {
-		if s, ok := spell(k); ok {
-			k = s
+// keysOf splits binding, as the config writes it, into its keys: one key,
+// or a sequence of keys with a space between each two. A space is part of a
+// key when nothing but modifiers come before it in the key, so " " and
+// "alt+ " are the space bar.
+func keysOf(binding string) []string {
+	var keys []string
+	start := 0
+	for i := range len(binding) {
+		if binding[i] == ' ' && !onlyModifiers(binding[start:i]) {
+			keys = append(keys, binding[start:i])
+			start = i + 1
 		}
-		if !slices.Contains(out, k) {
-			out = append(out, k)
+	}
+	return append(keys, binding[start:])
+}
+
+// onlyModifiers reports whether s is nothing but modifiers, such as "" or
+// "ctrl+alt+".
+func onlyModifiers(s string) bool {
+	for s != "" {
+		before := s
+		for _, m := range modifiers {
+			s = strings.TrimPrefix(s, m.prefix)
+		}
+		if s == before {
+			return false
+		}
+	}
+	return true
+}
+
+// spellBinding spells binding as Keys returns it: each of its keys as spell
+// spells it, with one space between them. Its error names the key that is
+// no key, and the sequence it is in.
+func spellBinding(binding string) (string, error) {
+	keys := keysOf(binding)
+	for i, k := range keys {
+		s, ok := spell(k)
+		if !ok {
+			return "", fmt.Errorf("unknown key %s", quoteKey(k, binding))
+		}
+		keys[i] = s
+	}
+	return strings.Join(keys, " "), nil
+}
+
+// quoteKey quotes key, one of the keys of binding, for a problem: with the
+// sequence it is in, when binding is one.
+func quoteKey(key, binding string) string {
+	if key == binding {
+		return strconv.Quote(key)
+	}
+	return fmt.Sprintf("%q in %q", key, binding)
+}
+
+// clean spells bindings as spellBinding does and drops the repeats, keeping
+// the first of each. A binding with a key that is no key stays as it is
+// written, for New to report.
+func clean(bindings []string) []string {
+	var out []string
+	for _, b := range bindings {
+		if s, err := spellBinding(b); err == nil {
+			b = s
+		}
+		if !slices.Contains(out, b) {
+			out = append(out, b)
 		}
 	}
 	return out

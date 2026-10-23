@@ -23,7 +23,7 @@ import (
 )
 
 func TestNewModelStartState(t *testing.T) {
-	m := newModel("/work/project", testFS, noWrites, testKeys, noColors)
+	m := newModel("/work/project", testFS, noWrites, testKeys, noColors, noMouse)
 	if m.focus != paneSidebar {
 		t.Errorf("start focus = %v, want the sidebar", m.focus)
 	}
@@ -219,7 +219,7 @@ func TestPastedTextGoesInAtTheCursor(t *testing.T) {
 // keeps the cursor in view.
 func TestAResizeKeepsTheCursorInView(t *testing.T) {
 	fsys := fstest.MapFS{"long.txt": {Data: []byte(strings.Repeat("abcdefghij", 10) + "END\n")}}
-	m := press(send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 200, Height: 10}), "enter", "end")
+	m := press(send(newModel("/w", fsys, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 200, Height: 10}), "enter", "end")
 	m = send(m, tea.WindowSizeMsg{Width: 60, Height: 10})
 	if got := editorText(m)[0]; !strings.HasSuffix(got, "END") {
 		t.Errorf("after narrowing, the first row = %q, want the line's end in view", got)
@@ -239,7 +239,7 @@ func TestViewFillsTerminal(t *testing.T) {
 }
 
 func TestViewDefaultsTo80x24(t *testing.T) {
-	lines := strings.Split(newModel("/work/project", testFS, noWrites, testKeys, noColors).View().Content, "\n")
+	lines := strings.Split(newModel("/work/project", testFS, noWrites, testKeys, noColors, noMouse).View().Content, "\n")
 	if len(lines) != 24 || lipgloss.Width(lines[1]) != 80 {
 		t.Errorf("before a WindowSizeMsg the view should be 80x24, got %d lines of %d cells",
 			len(lines), lipgloss.Width(lines[1]))
@@ -379,7 +379,7 @@ func TestViewDrawsTheTreeInTheFilesBox(t *testing.T) {
 }
 
 func TestSidebarShowsAWorkspaceItCannotRead(t *testing.T) {
-	if got, want := ansi.Strip(newModel("/work/project", deniedFS{}, noWrites, testKeys, noColors).sidebarBody()), "❯ ⚠ permission denied"; got != want {
+	if got, want := ansi.Strip(newModel("/work/project", deniedFS{}, noWrites, testKeys, noColors, noMouse).sidebarBody()), "❯ ⚠ permission denied"; got != want {
 		t.Errorf("sidebar = %q, want %q", got, want)
 	}
 }
@@ -439,7 +439,7 @@ func TestFooterHintsFollowFocusAndOpenTabs(t *testing.T) {
 }
 
 func TestSidebarScrollsWithinTheBox(t *testing.T) {
-	m := send(newModel("/w", manyFiles(20), noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 10})
+	m := send(newModel("/w", manyFiles(20), noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 10})
 	if rows := sidebarRows(m); len(rows) != 6 || rows[0] != "❯   f00" {
 		t.Errorf("a 10-row terminal leaves 6 tree rows starting at f00, got %q", rows)
 	}
@@ -450,7 +450,7 @@ func TestSidebarScrollsWithinTheBox(t *testing.T) {
 }
 
 func TestSidebarUsesTheDefaultSizeBeforeTheFirstResize(t *testing.T) {
-	if n := len(sidebarRows(newModel("/w", manyFiles(30), noWrites, testKeys, noColors))); n != 20 {
+	if n := len(sidebarRows(newModel("/w", manyFiles(30), noWrites, testKeys, noColors, noMouse))); n != 20 {
 		t.Errorf("before a WindowSizeMsg the tree should fill the 80x24 sidebar's 20 rows, got %d", n)
 	}
 }
@@ -461,7 +461,7 @@ func TestSidebarUsesTheDefaultSizeBeforeTheFirstResize(t *testing.T) {
 func TestLongNamesAndDeepFoldersKeepTheLayout(t *testing.T) {
 	deep := "a/b/c/d/" + strings.Repeat("long-name-", 8)
 	fsys := fstest.MapFS{"日本語日本語日本語日本語.txt": {}, deep: {}}
-	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 63, Height: 12})
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 63, Height: 12})
 	// → alternately opens a folder and steps into it, down to the deep file.
 	m = press(m, "right", "right", "right", "right", "right", "right", "right", "right")
 	if row, _ := m.files.Selected(); row.Depth != 4 || row.Node.dir {
@@ -492,7 +492,7 @@ func TestTinyTerminalShowsOneTreeRow(t *testing.T) {
 // row per entry and the box aligned.
 func TestUnsafeNamesKeepOneRowPerEntry(t *testing.T) {
 	fsys := fstest.MapFS{"two\nlines": {}, "\x1b[2Jclear": {}}
-	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 	if got, want := ansi.Strip(m.sidebarBody()), "❯   ?[2Jclear\n    two?lines"; got != want {
 		t.Errorf("sidebar = %q, want %q", got, want)
 	}
@@ -510,7 +510,7 @@ var bigFS = fstest.MapFS{"big.txt": {Data: []byte(numberedLines(100))}}
 // openBig returns a model on bigFS, 100 columns wide and h rows tall, with
 // big.txt open and the editor focused.
 func openBig(h int) model {
-	return press(send(newModel("/w", bigFS, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: h}), "enter")
+	return press(send(newModel("/w", bigFS, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: h}), "enter")
 }
 
 // editorText is the editor pane's body as m's view draws it, one string per
@@ -537,7 +537,13 @@ func activeKey(m model) string {
 // app/main.go, go.mod, then README.md, which is active, with the editor
 // focused.
 func threeTabs() model {
-	return press(newTestModel(), "right", "down", "enter", "shift+tab", "down", "enter", "shift+tab", "down", "enter")
+	return openAll(newTestModel())
+}
+
+// openAll opens every file of testFS in m, fresh from newModel, as
+// threeTabs does.
+func openAll(m model) model {
+	return press(m, "right", "down", "enter", "shift+tab", "down", "enter", "shift+tab", "down", "enter")
 }
 
 func TestEnterOpensAFileInATab(t *testing.T) {
@@ -582,7 +588,7 @@ func (c countingFS) Open(name string) (fs.File, error) {
 
 func TestEnterOnAnOpenFileSwitchesToItsTab(t *testing.T) {
 	fsys := countingFS{MapFS: testFS, opens: map[string]int{}}
-	m := send(newModel("/work/project", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m := send(newModel("/work/project", fsys, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = press(m, "down", "enter", "shift+tab", "down", "enter", "shift+tab", "up", "enter") // go.mod, README.md, go.mod
 	if tabs, active := m.tabs.Tabs(); len(tabs) != 2 || active != 0 {
 		t.Errorf("tabs = %+v (active %d), want the two tabs with go.mod active", tabs, active)
@@ -606,7 +612,7 @@ func TestOneFileNeverGetsTwoTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustSymlink(t, "b-real.txt", filepath.Join(dir, "c-sym.txt"))
-	m := send(newModel(dir, os.DirFS(dir), noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m := send(newModel(dir, os.DirFS(dir), noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = press(m, "enter", "shift+tab", "down", "enter", "shift+tab", "down", "enter") // a-hard, b-real, c-sym
 	if tabs, _ := m.tabs.Tabs(); len(tabs) != 1 || tabs[0].Key != "a-hard.txt" {
 		t.Errorf("tabs = %+v, want the one tab for the one file", tabs)
@@ -624,7 +630,7 @@ func TestEnterOnAFolderOpensNoTab(t *testing.T) {
 }
 
 func TestEnterOnAnErrorRowDoesNothing(t *testing.T) {
-	m := press(newModel("/w", deniedFS{}, noWrites, testKeys, noColors), "enter")
+	m := press(newModel("/w", deniedFS{}, noWrites, testKeys, noColors, noMouse), "enter")
 	if m.tabs.Len() != 0 || m.focus != paneSidebar {
 		t.Errorf("enter on an error row: %d tabs, focus %v; want none and the sidebar", m.tabs.Len(), m.focus)
 	}
@@ -678,6 +684,227 @@ func TestCtrlWClosesTheActiveTab(t *testing.T) {
 	}
 }
 
+func TestDoubleEscClosesTheActiveTab(t *testing.T) {
+	m := press(threeTabs(), "esc", "esc")
+	if got := activeKey(m); m.tabs.Len() != 2 || got != "go.mod" {
+		t.Errorf("after esc esc: %d tabs, active %q; want README.md closed and go.mod active", m.tabs.Len(), got)
+	}
+	m = press(m, "shift+tab", "esc", "esc") // from the sidebar too
+	if got := activeKey(m); m.tabs.Len() != 1 || got != "app/main.go" {
+		t.Errorf("from the sidebar: %d tabs, active %q; want go.mod closed and app/main.go active", m.tabs.Len(), got)
+	}
+}
+
+// A double esc pressed fast arrives as alt+esc from a terminal without the
+// kitty keyboard protocol.
+func TestAltEscClosesTheActiveTab(t *testing.T) {
+	if m := press(threeTabs(), "alt+esc"); m.tabs.Len() != 2 {
+		t.Errorf("after alt+esc: %d tabs, want README.md closed", m.tabs.Len())
+	}
+}
+
+func TestAKeyAfterALoneEscCountsOnItsOwn(t *testing.T) {
+	m := press(newTestModel(), "down", "enter", "esc", "x", "esc", "right", "y") // go.mod
+	if got, want := editorText(m)[0], " 1 xmyodule example.com/project"; got != want {
+		t.Errorf("editor's first row = %q, want %q: x typed, the cursor moved, y typed", got, want)
+	}
+}
+
+// instantTimeout makes the wait for a sequence's next key end at once, so a
+// test lets the wait run out by draining the command that started it.
+func instantTimeout(press int) tea.Cmd {
+	return func() tea.Msg { return sequenceTimeoutMsg{press} }
+}
+
+// The wait a key press starts ends for that press, so the sequence it
+// started or went on with ends unless another key came since.
+func TestTheWaitForASequencesNextKeyRunsOut(t *testing.T) {
+	if got, want := sequenceTimer(7)(), (sequenceTimeoutMsg{7}); got != want {
+		t.Errorf("the wait ends with %v, want %v", got, want)
+	}
+}
+
+func TestADoubleEscMustComeWithinTheTimeout(t *testing.T) {
+	m := threeTabs()
+	m.timeout = instantTimeout
+	m, cmd := update(m, keyMsg("esc"))
+	m, _ = drain(m, cmd) // the wait for the second esc runs out
+	if m = press(m, "esc"); m.tabs.Len() != 3 {
+		t.Fatalf("esc, a wait, esc: %d tabs, want all 3 open", m.tabs.Len())
+	}
+	if m = press(m, "esc"); m.tabs.Len() != 2 {
+		t.Errorf("the esc after the wait starts a double esc again: %d tabs, want 2", m.tabs.Len())
+	}
+}
+
+// Review focus: the wait an earlier esc started never ends the double esc
+// a later one starts.
+func TestAnOldWaitDoesntEndANewerSequence(t *testing.T) {
+	m := threeTabs()
+	m.timeout = instantTimeout
+	m, first := update(m, keyMsg("esc"))
+	m = press(m, "right", "esc")
+	m, _ = drain(m, first) // the first esc's wait runs out
+	if m = press(m, "esc"); m.tabs.Len() != 2 {
+		t.Errorf("the later esc esc: %d tabs, want README.md closed", m.tabs.Len())
+	}
+}
+
+func TestAPasteBreaksASequence(t *testing.T) {
+	m := press(threeTabs(), "esc")
+	m = press(paste(m, "x"), "esc")
+	if m.tabs.Len() != 3 {
+		t.Errorf("esc, a paste, esc: %d tabs, want all 3 open", m.tabs.Len())
+	}
+}
+
+// newMouseModel is newTestModel with the mouse on.
+func newMouseModel() model {
+	return send(newModel("/work/project", testFS, noWrites, testKeys, noColors, true), tea.WindowSizeMsg{Width: 100, Height: 30})
+}
+
+// click clicks button on the cell where m's view draws the nth (from 0)
+// text in the top border: a tab's title, or a ×. It counts a cell per rune,
+// which holds for the box's lines and ASCII titles.
+func click(t *testing.T, m model, button tea.MouseButton, text string, nth int) model {
+	t.Helper()
+	top, find := []rune(topBorder(m)), []rune(text)
+	for x := range top {
+		if x+len(find) <= len(top) && string(top[x:x+len(find)]) == text {
+			if nth == 0 {
+				return send(m, tea.MouseClickMsg{X: x, Y: 1, Button: button})
+			}
+			nth--
+		}
+	}
+	t.Fatalf("the top border %q holds no such %q", string(top), text)
+	return m
+}
+
+// tabKeys returns the keys of m's open tabs, left to right, and the active
+// one's.
+func tabKeys(m model) (keys []string, active string) {
+	tabs, _ := m.tabs.Tabs()
+	for _, t := range tabs {
+		keys = append(keys, t.Key)
+	}
+	return keys, activeKey(m)
+}
+
+func TestTheMouseIsReportedOnlyWhenItIsOn(t *testing.T) {
+	if got := newTestModel().View().MouseMode; got != tea.MouseModeNone {
+		t.Errorf("with the mouse off, mouse mode %v, want none", got)
+	}
+	if got := newMouseModel().View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Errorf("with the mouse on, mouse mode %v, want clicks and the wheel", got)
+	}
+}
+
+func TestEachTabHasAnXWithTheMouseOn(t *testing.T) {
+	if top, want := topBorder(openAll(newMouseModel())), "╭─ main.go × ─ go.mod × ─ README.md × ─"; !strings.Contains(top, want) {
+		t.Errorf("top border %q should hold %q", top, want)
+	}
+	if top := topBorder(threeTabs()); strings.Contains(top, "×") {
+		t.Errorf("with the mouse off, top border %q should hold no ×", top)
+	}
+}
+
+func TestClickingATabSwitchesToIt(t *testing.T) {
+	m := press(openAll(newMouseModel()), "shift+tab") // the sidebar focused
+	m = click(t, m, tea.MouseLeft, "go.mod", 0)
+	if got := activeKey(m); got != "go.mod" || m.focus != paneEditor {
+		t.Errorf("after clicking go.mod: active %q, focus %v; want go.mod and the editor", got, m.focus)
+	}
+}
+
+func TestClickingATabsXClosesIt(t *testing.T) {
+	m := click(t, openAll(newMouseModel()), tea.MouseLeft, "×", 0) // main.go's
+	if keys, active := tabKeys(m); !slices.Equal(keys, []string{"go.mod", "README.md"}) || active != "README.md" {
+		t.Errorf("after main.go's ×: tabs %q, active %q; want main.go closed, README.md still active", keys, active)
+	}
+	m = click(t, m, tea.MouseLeft, "×", 1) // README.md's, the active tab's
+	if keys, active := tabKeys(m); !slices.Equal(keys, []string{"go.mod"}) || active != "go.mod" {
+		t.Errorf("after README.md's ×: tabs %q, active %q; want just go.mod", keys, active)
+	}
+	m = click(t, m, tea.MouseLeft, "×", 0)
+	if m.tabs.Len() != 0 || m.focus != paneSidebar {
+		t.Errorf("after the last ×: %d tabs, focus %v; want none and the sidebar", m.tabs.Len(), m.focus)
+	}
+}
+
+func TestMiddleClickingATabClosesIt(t *testing.T) {
+	m := click(t, openAll(newMouseModel()), tea.MouseMiddle, "go.mod", 0)
+	if keys, active := tabKeys(m); !slices.Equal(keys, []string{"app/main.go", "README.md"}) || active != "README.md" {
+		t.Errorf("after middle-clicking go.mod: tabs %q, active %q; want go.mod closed", keys, active)
+	}
+}
+
+func TestOtherClicksDoNothing(t *testing.T) {
+	m := openAll(newMouseModel())
+	for _, c := range []struct {
+		name string
+		m    model
+	}{
+		{"a right click on a tab", click(t, m, tea.MouseRight, "go.mod", 0)},
+		{"a click on the dash between two tabs", click(t, m, tea.MouseLeft, "─ go.mod", 0)},
+		{"a click in the text", send(m, tea.MouseClickMsg{X: 50, Y: 10, Button: tea.MouseLeft})},
+		{"a click in the tree", send(m, tea.MouseClickMsg{X: 5, Y: 3, Button: tea.MouseLeft})},
+		{"a click on the border after the tabs", send(m, tea.MouseClickMsg{X: 90, Y: 1, Button: tea.MouseLeft})},
+	} {
+		if keys, active := tabKeys(c.m); len(keys) != 3 || active != "README.md" || c.m.focus != paneEditor {
+			t.Errorf("%s: tabs %q, active %q, focus %v; want nothing changed", c.name, keys, active, c.m.focus)
+		}
+	}
+}
+
+func TestWithTheMouseOffTheMouseDoesNothing(t *testing.T) {
+	if m := click(t, threeTabs(), tea.MouseMiddle, "go.mod", 0); m.tabs.Len() != 3 {
+		t.Errorf("a middle click with the mouse off: %d tabs, want all 3", m.tabs.Len())
+	}
+	m := send(openBig(30), tea.MouseWheelMsg{X: 50, Y: 10, Button: tea.MouseWheelDown})
+	if line, _ := cursor(m); line != 0 {
+		t.Errorf("the wheel with the mouse off: cursor on line %d, want 0", line)
+	}
+}
+
+func TestAClickBreaksASequence(t *testing.T) {
+	m := press(openAll(newMouseModel()), "esc")
+	m = press(send(m, tea.MouseClickMsg{X: 50, Y: 10, Button: tea.MouseLeft}), "esc")
+	if m.tabs.Len() != 3 {
+		t.Errorf("esc, a click, esc: %d tabs, want all 3 open", m.tabs.Len())
+	}
+}
+
+func TestTheWheelMovesTheCursorOfThePaneUnderIt(t *testing.T) {
+	m := send(newModel("/w", bigFS, noWrites, testKeys, noColors, true), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "enter", "shift+tab") // big.txt open, the sidebar focused
+	wheel := func(m model, button tea.MouseButton, x, y int) model {
+		return send(m, tea.MouseWheelMsg{X: x, Y: y, Button: button})
+	}
+	m = wheel(m, tea.MouseWheelDown, 50, 10)
+	if line, _ := cursor(m); line != 3 || m.focus != paneSidebar {
+		t.Errorf("a notch down over the text: cursor on line %d, focus %v; want line 3, the sidebar still focused", line, m.focus)
+	}
+	m = wheel(wheel(m, tea.MouseWheelDown, 50, 10), tea.MouseWheelUp, 50, 10)
+	if line, _ := cursor(m); line != 3 {
+		t.Errorf("a notch down and one up: cursor on line %d, want 3", line)
+	}
+	tree := sidebarRows(m)
+	m = wheel(m, tea.MouseWheelUp, 50, 0)  // the header
+	m = wheel(m, tea.MouseWheelUp, 50, 29) // the footer
+	if line, _ := cursor(m); line != 3 || !slices.Equal(sidebarRows(m), tree) {
+		t.Errorf("over the header and the footer: cursor on line %d; want the wheel to do nothing", line)
+	}
+}
+
+func TestTheWheelMovesThroughTheTree(t *testing.T) {
+	m := send(newModel("/w", manyFiles(20), noWrites, testKeys, noColors, true), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = send(m, tea.MouseWheelMsg{X: 5, Y: 5, Button: tea.MouseWheelDown})
+	if row, _ := m.files.Selected(); row.Node.path != "f03" {
+		t.Errorf("a notch down over the tree: cursor on %q, want f03", row.Node.path)
+	}
+}
+
 func TestMoveKeysNeedEditorFocus(t *testing.T) {
 	m := openBig(30) // a page is 26 lines: the last one starts at line 75
 	for _, step := range []struct {
@@ -713,7 +940,7 @@ func TestMoveKeysNeedEditorFocus(t *testing.T) {
 func TestEachTabKeepsItsCursor(t *testing.T) {
 	lines := []byte(numberedLines(100))
 	fsys := fstest.MapFS{"a.txt": {Data: lines}, "b.txt": {Data: lines}}
-	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = press(m, "enter", "pgdown", "right")   // a.txt, a page down
 	m = press(m, "shift+tab", "down", "enter") // b.txt, at the top
 	if got, want := editorText(m)[0], "   1 line 1"; got != want {
@@ -738,7 +965,7 @@ func TestResizeSetsTheTextWindowHeight(t *testing.T) {
 }
 
 func TestAFileOpenedBeforeTheFirstResizeFillsTheDefaultPane(t *testing.T) {
-	m := press(newModel("/w", bigFS, noWrites, testKeys, noColors), "enter", "ctrl+end") // 80x24: a 20-line window
+	m := press(newModel("/w", bigFS, noWrites, testKeys, noColors, noMouse), "enter", "ctrl+end") // 80x24: a 20-line window
 	rows := editorText(m)
 	if len(rows) != 20 || rows[0] != "  81 line 81" || rows[19] != " 100 line 100" {
 		t.Errorf("editor = %q; want lines 81 to 100", rows)
@@ -748,7 +975,7 @@ func TestAFileOpenedBeforeTheFirstResizeFillsTheDefaultPane(t *testing.T) {
 // Review focus: a tiny terminal still shows one line of the open file, and
 // scrolling moves it.
 func TestTinyTerminalShowsOneLineOfText(t *testing.T) {
-	m := press(send(newModel("/w", bigFS, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 40, Height: 3}), "enter", "down")
+	m := press(send(newModel("/w", bigFS, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 40, Height: 3}), "enter", "down")
 	if rows := editorText(m); len(rows) != 1 || rows[0] != "   2 line 2" {
 		t.Errorf("editor = %q, want just line 2", rows)
 	}
@@ -765,7 +992,7 @@ func TestOpenFilesKeepTheLayout(t *testing.T) {
 	for i := range 12 {
 		fsys[fmt.Sprintf("ファイル-%02d.txt", i)] = &fstest.MapFile{Data: []byte(text)}
 	}
-	m := send(newModel("/w", fsys, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 83, Height: 12})
+	m := send(newModel("/w", fsys, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 83, Height: 12})
 	for range 12 {
 		m = press(m, "enter", "shift+tab", "down") // open each file in turn
 	}

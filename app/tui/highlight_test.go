@@ -34,7 +34,7 @@ func colored(capture, text string) string {
 // is never run leaves its document's Highlighter waiting for it.
 func newColorModel(t *testing.T, fsys fs.FS) model {
 	t.Helper()
-	m := newModel("/w", fsys, noWrites, testKeys, candy)
+	m := newModel("/w", fsys, noWrites, testKeys, candy, noMouse)
 	m.tick = instantTick
 	return send(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 }
@@ -110,7 +110,7 @@ func TestLargeFilesAndLongLinesStayPlain(t *testing.T) {
 // with -race).
 func TestTypingWhileParsesRun(t *testing.T) {
 	d := newDisk()
-	m := send(newModel("/w", goFS, d.write, testKeys, candy), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m := send(newModel("/w", goFS, d.write, testKeys, candy, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 	if err := run(m, make(chan os.Signal), runOpts(strings.NewReader("\rx\ry\rz\x11"))...); err != nil { // enter opens main.go, then x, y, z on lines of their own, then ctrl+q
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestAFrameOfLongLinesIsFast(t *testing.T) {
 }
 
 func TestTheThemeNoneParsesNothing(t *testing.T) {
-	m := send(newModel("/w", goFS, noWrites, testKeys, noColors), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m := send(newModel("/w", goFS, noWrites, testKeys, noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
 	if m, cmd := update(m, keyMsg("enter")); cmd != nil || m.activeDocument().syntax != nil {
 		t.Error("with the theme none, opening a file starts no parse")
 	}

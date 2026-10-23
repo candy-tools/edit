@@ -23,6 +23,9 @@ type Config struct {
 	// Theme names the color theme, "" for the default. Which themes exist
 	// is for the editor to check.
 	Theme string
+	// Mouse turns the mouse on: off, the terminal keeps the mouse to
+	// itself, to select text by dragging.
+	Mouse bool
 }
 
 // DefaultPath is where edit looks for its config file:
@@ -38,7 +41,8 @@ func DefaultPath() (string, error) {
 
 // Load reads the config file at path: one YAML document, a mapping of
 // settings, which are shortcuts, mapping scopes to mappings of action names
-// to a key or a list of keys, and theme, a theme's name. An empty file, and
+// to a key or a list of keys, theme, a theme's name, and mouse, true or
+// false. An empty file, and
 // a null in place of a mapping, mean no settings there. A YAML alias stands
 // for the value its anchor marks.
 //
@@ -106,6 +110,12 @@ func settings(n *yaml.Node) (Config, error) {
 			}
 			cfg.Theme = v.Value
 			return nil
+		case "mouse":
+			v := resolve(value)
+			if v.Kind != yaml.ScalarNode || v.ShortTag() != "!!bool" {
+				return problem(at, "want true or false")
+			}
+			return v.Decode(&cfg.Mouse)
 		}
 		return fmt.Errorf("unknown setting %q", name)
 	})

@@ -12,7 +12,7 @@ var defaultKeys = map[string][]string{
 	"global.switch-focus": {"shift+tab"},
 	"global.next-tab":     {"ctrl+pgdown"},
 	"global.previous-tab": {"ctrl+pgup"},
-	"global.close-tab":    {"ctrl+w"},
+	"global.close-tab":    {"ctrl+w", "esc esc"},
 	"sidebar.up":          {"up"},
 	"sidebar.down":        {"down"},
 	"sidebar.page-up":     {"pgup"},

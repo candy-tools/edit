@@ -94,7 +94,7 @@ func instantTick() tea.Cmd {
 // instant ticks, the default keys and a 100x30 terminal.
 func newEditModel(fsys fs.FS) (model, *disk) {
 	d := newDisk()
-	m := newModel("/work/project", fsys, d.write, testKeys, noColors)
+	m := newModel("/work/project", fsys, d.write, testKeys, noColors, noMouse)
 	m.tick = instantTick
 	return send(m, tea.WindowSizeMsg{Width: 100, Height: 30}), d
 }
@@ -260,6 +260,82 @@ func TestAClosingThatCantSaveAsksAgain(t *testing.T) {
 	}
 	if _, ok := d.file("go.mod"); ok {
 		t.Error("nothing could be written")
+	}
+}
+
+// Review focus: esc is how a prompt is cancelled, so a double esc, which
+// closes a tab, never closes one anyway: its first esc cancels the prompt,
+// and its second closes, which asks again.
+func TestADoubleEscNeverClosesAnyway(t *testing.T) {
+	m, d := typeInGoMod(t)
+	d.fail("go.mod", true)
+	m = press(m, "ctrl+w", "esc", "esc")
+	if m.tabs.Len() != 1 {
+		t.Fatal("a double esc must not close a tab that can't be saved")
+	}
+	if got, want := footerText(m), " ctrl+w: Close anyway  any other key: Cancel"; got != want {
+		t.Errorf("footer = %q, want it to ask again: %q", got, want)
+	}
+}
+
+// The prompt offers the first key of close or quit that is no sequence,
+// since only such a key closes or quits anyway.
+func TestThePromptOffersAKeyNotASequence(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		o    overrides
+		keys []string // the keys that close the tab or quit, which then ask again
+		want string
+	}{
+		{"a sequence first", overrides{"global": {"close-tab": {"esc esc", "ctrl+x"}}}, []string{"esc", "esc"},
+			" ctrl+x: Close anyway  any other key: Cancel"},
+		{"only a sequence", overrides{"global": {"close-tab": {"esc esc"}}}, []string{"esc", "esc"},
+			" any other key: Cancel"},
+		{"quit", overrides{"global": {"quit": {"esc q", "ctrl+q"}}}, []string{"ctrl+q"},
+			" ctrl+q: Quit anyway  any other key: Cancel"},
+	} {
+		d := newDisk()
+		m := send(newModel("/work/project", testFS, d.write, rebound(t, c.o), noColors, noMouse), tea.WindowSizeMsg{Width: 100, Height: 30})
+		m = press(m, "down", "enter", "x")
+		d.fail("go.mod", true)
+		if got := footerText(press(m, c.keys...)); got != c.want {
+			t.Errorf("%s: footer = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A tab's ×, like close, saves the tab first: when it can't, the tab stays
+// and is shown, the footer asks again, and its × again closes it anyway.
+func TestClickingTheXOfATabThatCantBeSaved(t *testing.T) {
+	d := newDisk()
+	m := send(newModel("/work/project", testFS, d.write, testKeys, noColors, true), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "down", "enter", "x", "shift+tab", "down", "enter") // go.mod edited, then README.md, active
+	d.fail("go.mod", true)
+	m = click(t, m, tea.MouseLeft, "×", 0) // go.mod's
+	if got := activeKey(m); m.tabs.Len() != 2 || got != "go.mod" {
+		t.Fatalf("after go.mod's ×: %d tabs, active %q; want go.mod kept and shown", m.tabs.Len(), got)
+	}
+	if got, want := footerText(m), " ctrl+w: Close anyway  any other key: Cancel"; got != want {
+		t.Errorf("footer = %q, want %q", got, want)
+	}
+	m = click(t, m, tea.MouseLeft, "×", 0)
+	if keys, _ := tabKeys(m); !slices.Equal(keys, []string{"README.md"}) {
+		t.Errorf("after go.mod's × again: tabs %q, want it closed anyway", keys)
+	}
+}
+
+// Review focus: the prompt is for the tab that couldn't be saved; another
+// tab's × tries that tab, and never closes it anyway.
+func TestAnotherTabsXDoesntCloseItAnyway(t *testing.T) {
+	d := newDisk()
+	m := send(newModel("/work/project", testFS, d.write, testKeys, noColors, true), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = press(m, "down", "enter", "x", "shift+tab", "down", "enter", "y") // go.mod and README.md edited
+	d.fail("go.mod", true)
+	d.fail("README.md", true)
+	m = click(t, m, tea.MouseLeft, "×", 0) // go.mod's: the prompt
+	m = click(t, m, tea.MouseLeft, "×", 1) // README.md's
+	if got := activeKey(m); m.tabs.Len() != 2 || got != "README.md" {
+		t.Errorf("after README.md's ×: %d tabs, active %q; want both kept, README.md shown", m.tabs.Len(), got)
 	}
 }
 

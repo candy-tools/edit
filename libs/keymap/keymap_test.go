@@ -106,7 +106,7 @@ func TestAnEmptyListUnbindsAnAction(t *testing.T) {
 	if got := m.Keys(listDown); got != nil {
 		t.Errorf("list.down: keys %q, want nil", got)
 	}
-	if _, ok := m.Lookup("view", press(tea.KeyDown, 0)); ok {
+	if _, _, ok := m.Lookup("view", "", press(tea.KeyDown, 0)); ok {
 		t.Error("down should trigger nothing once view.down is unbound")
 	}
 }
@@ -177,6 +177,25 @@ func TestKeysAreSpelledAsBubbleTeaNamesThem(t *testing.T) {
 	}
 }
 
+func TestASequenceIsKeysWithASpaceBetween(t *testing.T) {
+	m := build(t, overrides{"list": {"open": {"esc esc", "shift+ctrl+K alt+ ", "ctrl++ f5"}}})
+	if got, want := m.Keys(listOpen), []string{"esc esc", "ctrl+shift+k alt+space", "ctrl++ f5"}; !slices.Equal(got, want) {
+		t.Errorf("list.open: keys %q, want %q", got, want)
+	}
+}
+
+func TestNewReportsAnUnknownKeyInASequence(t *testing.T) {
+	for _, c := range []struct{ name, keys, want string }{
+		{"an unknown key", "esc ctrl+uo", `list.open: unknown key "ctrl+uo" in "esc ctrl+uo"`},
+		{"two spaces between keys", "esc  esc", `list.open: unknown key " esc" in "esc  esc"`},
+		{"a space at the end", "esc ", `list.open: unknown key "" in "esc "`},
+	} {
+		if got := problems(overrides{"list": {"open": {c.keys}}}); got != c.want {
+			t.Errorf("%s: problems %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestNewReportsUnknownScopesAndActions(t *testing.T) {
 	got := problems(overrides{"lst": {"up": {"k"}}, "list": {"donw": {"j"}}, Global: {"quti": {"x"}}})
 	want := "global.quti: unknown action\nlist.donw: unknown action\nlst: unknown scope"
@@ -219,6 +238,35 @@ func TestNewReportsKeysBoundTwice(t *testing.T) {
 			`key "enter" is bound to both global.next and list.open`},
 		{"two spellings of one key", overrides{"list": {"up": {"shift+ctrl+z"}, "down": {"ctrl+shift+z"}}},
 			`key "ctrl+shift+z" is bound to both list.down and list.up`},
+		{"two spellings of one sequence", overrides{"list": {"up": {"esc shift+ctrl+z"}, "down": {"esc ctrl+shift+z"}}},
+			`key "esc ctrl+shift+z" is bound to both list.down and list.up`},
+	} {
+		if got := problems(c.o); got != c.want {
+			t.Errorf("%s: problems =\n%s\nwant\n%s", c.name, got, c.want)
+		}
+	}
+}
+
+// A key that starts a sequence active with it would leave the sequence's
+// first key meaning two things.
+func TestNewReportsAKeyThatStartsASequence(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		o    overrides
+		want string
+	}{
+		{"in one scope", overrides{"list": {"up": {"esc"}, "open": {"esc esc"}}},
+			`key "esc" is bound to list.up and starts "esc esc" of list.open`},
+		{"a global key and a pane's sequence", overrides{Global: {"next": {"esc"}}, "list": {"open": {"esc esc"}}},
+			`key "esc" is bound to global.next and starts "esc esc" of list.open`},
+		{"a pane's key and a global sequence", overrides{Global: {"next": {"esc esc"}}, "list": {"open": {"esc"}}},
+			`key "esc" is bound to list.open and starts "esc esc" of global.next`},
+		{"a shorter sequence", overrides{"list": {"up": {"esc esc"}, "open": {"esc esc esc"}}},
+			`key "esc esc" is bound to list.up and starts "esc esc esc" of list.open`},
+		{"two global actions, reported once", overrides{Global: {"next": {"esc"}, "prev": {"esc esc"}}},
+			`key "esc" is bound to global.next and starts "esc esc" of global.prev`},
+		{"sequences that start alike", overrides{"list": {"up": {"esc a"}, "open": {"esc b"}}}, ""},
+		{"a key and a sequence in two panes", overrides{"list": {"up": {"esc"}}, "view": {"up": {"esc esc"}}}, ""},
 	} {
 		if got := problems(c.o); got != c.want {
 			t.Errorf("%s: problems =\n%s\nwant\n%s", c.name, got, c.want)
@@ -228,10 +276,10 @@ func TestNewReportsKeysBoundTwice(t *testing.T) {
 
 func TestTheSameKeyInTwoPanesIsFine(t *testing.T) {
 	m := build(t, overrides{"list": {"down": {"j"}}}) // view.down has j too
-	if id, _ := m.Lookup("list", typed("j")); id != listDown {
+	if id, _, _ := m.Lookup("list", "", typed("j")); id != listDown {
 		t.Errorf("j in the list = %v, want list.down", id)
 	}
-	if id, _ := m.Lookup("view", typed("j")); id != viewDown {
+	if id, _, _ := m.Lookup("view", "", typed("j")); id != viewDown {
 		t.Errorf("j in the view = %v, want view.down", id)
 	}
 }
@@ -298,9 +346,61 @@ func TestLookup(t *testing.T) {
 		{"a key press of several characters", "view", tea.KeyPressMsg{Code: tea.KeyExtended, Text: "jj"}, ID{}},
 		{"an unknown scope", "nope", press('q', tea.ModCtrl), ID{}},
 	} {
-		id, ok := m.Lookup(c.scope, c.msg)
+		id, _, ok := m.Lookup(c.scope, "", c.msg)
 		if id != c.want || ok != (c.want != ID{}) {
 			t.Errorf("%s: Lookup = %v, %t; want %v", c.name, id, ok, c.want)
+		}
+	}
+}
+
+func TestLookupASequence(t *testing.T) {
+	m := build(t, overrides{Global: {"next": {"ctrl+pgdown", "ctrl+k n"}}, "list": {"open": {"esc esc"}, "up": {"up", "ctrl+k up"}}})
+	esc := press(tea.KeyEscape, 0)
+	for _, c := range []struct {
+		name    string
+		scope   string
+		pending string // the start of a sequence pressed before msg
+		msg     tea.KeyPressMsg
+		want    ID     // the zero ID for none
+		next    string // the start of a sequence pressed after msg
+	}{
+		{"its first key starts it", "list", "", esc, ID{}, "esc"},
+		{"its last key triggers its action", "list", "esc", esc, listOpen, ""},
+		{"a global sequence", "list", "ctrl+k", typed("n"), next, ""},
+		{"a global sequence in another pane", "view", "", press('k', tea.ModCtrl), ID{}, "ctrl+k"},
+		{"two sequences that start alike", "list", "ctrl+k", press(tea.KeyUp, 0), listUp, ""},
+		{"a key that goes on with none counts on its own", "list", "esc", press(tea.KeyUp, 0), listUp, ""},
+		{"and can start another", "list", "esc", press('k', tea.ModCtrl), ID{}, "ctrl+k"},
+		{"or trigger nothing", "list", "esc", press(tea.KeyF5, 0), ID{}, ""},
+		{"a pane's sequence in another pane", "view", "", esc, ID{}, ""},
+		{"an unknown scope", "nope", "", press('k', tea.ModCtrl), ID{}, ""},
+	} {
+		id, next, ok := m.Lookup(c.scope, c.pending, c.msg)
+		if id != c.want || ok != (c.want != ID{}) || next != c.next {
+			t.Errorf("%s: Lookup = %v, %q, %t; want %v, %q", c.name, id, next, ok, c.want, c.next)
+		}
+	}
+}
+
+// A terminal without the kitty protocol sends alt and a key as esc then the
+// key, so Bubble Tea decodes esc and a key pressed together, such as a quick
+// double esc, as alt and the key.
+func TestLookupTakesAnUnboundAltKeyForEscThenTheKey(t *testing.T) {
+	m := build(t, overrides{"list": {"open": {"esc esc"}, "up": {"esc k", "esc J", "esc j"}, "down": {"alt+j", "x"}}})
+	for _, c := range []struct {
+		name string
+		msg  tea.KeyPressMsg
+		want ID // the zero ID for none
+	}{
+		{"alt+esc is esc esc", press(tea.KeyEscape, tea.ModAlt), listOpen},
+		{"alt+k is esc k", press('k', tea.ModAlt), listUp},
+		{"alt+J is esc J", tea.KeyPressMsg{Code: 'j', ShiftedCode: 'J', Mod: tea.ModAlt | tea.ModShift}, listUp},
+		{"a bound alt key is itself", press('j', tea.ModAlt), listDown},
+		{"alt and a key that is no sequence after esc", press('x', tea.ModAlt), ID{}},
+	} {
+		id, next, ok := m.Lookup("list", "", c.msg)
+		if id != c.want || ok != (c.want != ID{}) || next != "" {
+			t.Errorf("%s: Lookup = %v, %q, %t; want %v", c.name, id, next, ok, c.want)
 		}
 	}
 }
@@ -319,7 +419,7 @@ func TestLookupSpaceAndAlt(t *testing.T) {
 		{"the letter without alt", typed("k"), ID{}},
 		{"the arrow without alt", press(tea.KeyUp, 0), ID{}},
 	} {
-		id, ok := m.Lookup("list", c.msg)
+		id, _, ok := m.Lookup("list", "", c.msg)
 		if id != c.want || ok != (c.want != ID{}) {
 			t.Errorf("%s: Lookup = %v, %t; want %v", c.name, id, ok, c.want)
 		}
@@ -342,7 +442,7 @@ func TestLookupMatchesEveryEncoding(t *testing.T) {
 		{"ctrl+z with caps lock", press('z', tea.ModCtrl|tea.ModCapsLock), listOpen},
 		{"ctrl+z with num lock", press('z', tea.ModCtrl|tea.ModNumLock), listOpen},
 	} {
-		if id, _ := m.Lookup("list", c.msg); id != c.want {
+		if id, _, _ := m.Lookup("list", "", c.msg); id != c.want {
 			t.Errorf("%s: Lookup = %v, want %v", c.name, id, c.want)
 		}
 	}
@@ -438,6 +538,7 @@ func TestTheDecoderAgreesWithTheNames(t *testing.T) {
 		{"ctrl+z with caps lock, xterm's modifyOtherKeys", "\x1b[27;5;90~", "ctrl+z"},
 		{"alt+A, ESC A", "\x1bA", "alt+shift+a"},
 		{"alt+Ñ, ESC Ñ", "\x1bÑ", "alt+shift+ñ"},
+		{"esc esc read at once, as alt+esc", "\x1b\x1b", "alt+esc"},
 		{"J", "J", "J"},
 		{"the space bar", " ", "space"},
 		{"shift+tab", "\x1b[Z", "shift+tab"},
@@ -497,6 +598,10 @@ func TestLabel(t *testing.T) {
 		{"+ after a modifier", overrides{"list": {"up": {"alt++"}, "down": {"alt+-"}}},
 			[]ID{listUp, listDown}, "alt++/-"},
 		{"one key", nil, []ID{quit}, "ctrl+q"},
+		{"a sequence", overrides{Global: {"quit": {"esc q"}}}, []ID{quit}, "esc q"},
+		{"sequences are written in full", overrides{Global: {"prev": {"ctrl+k p"}, "next": {"ctrl+k n"}}},
+			[]ID{prev, next}, "ctrl+k p, ctrl+k n"},
+		{"a key and a sequence", overrides{Global: {"next": {"ctrl+k n"}}}, []ID{prev, next}, "ctrl+pgup, ctrl+k n"},
 		{"an unbound action is skipped", overrides{"view": {"up": {}}}, []ID{viewUp, viewDown}, "↓"},
 		{"an unknown action is skipped", nil, []ID{{"nope", "x"}, listOpen}, "enter"},
 		{"no action has keys", overrides{"view": {"up": {}, "down": {}}}, []ID{viewUp, viewDown}, ""},
@@ -504,6 +609,24 @@ func TestLabel(t *testing.T) {
 	} {
 		if got := build(t, c.o).Label(c.ids...); got != c.want {
 			t.Errorf("%s: Label = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSingleLabelLeavesSequencesOut(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		o    overrides
+		ids  []ID
+		want string
+	}{
+		{"a sequence first", overrides{Global: {"quit": {"esc q", "ctrl+q"}}}, []ID{quit}, "ctrl+q"},
+		{"only a sequence", overrides{Global: {"next": {"esc n"}}}, []ID{next}, ""},
+		{"written as Label writes keys", overrides{Global: {"prev": {"esc p", "alt+left"}, "next": {"alt+right"}}},
+			[]ID{prev, next}, "alt+←/→"},
+	} {
+		if got := build(t, c.o).SingleLabel(c.ids...); got != c.want {
+			t.Errorf("%s: SingleLabel = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
@@ -547,6 +670,10 @@ func TestKeysThatTypeTextInATypingScope(t *testing.T) {
 		{"ctrl and shift and a letter", cleanView("ctrl+shift+z"), ""},
 		{"named keys", cleanView("enter", "f5", "tab", "backspace"), ""},
 		{"a letter in another pane", overrides{"view": cleanView("down")["view"], "list": {"down": {"j"}}}, ""},
+		{"a sequence that starts with a letter", cleanView("j esc"), `view.down: key "j" in "j esc" types text`},
+		{"a global sequence that starts with a letter", overrides{"view": cleanView("down")["view"], Global: {"next": {"x esc"}}},
+			`global.next: key "x" in "x esc" types text`},
+		{"a sequence that goes on with a letter", cleanView("esc j"), ""},
 		{"an unknown key is only unknown", cleanView("ctrl+uo"), `view.down: unknown key "ctrl+uo"`},
 		{"sorted with the other problems", overrides{"view": {"up": {"ctrl+uo"}, "down": {"j"}}, Global: {"quit": {}}},
 			"global.quit: needs at least one key\nview.down: key \"j\" types text\nview.up: unknown key \"ctrl+uo\""},
