@@ -32,20 +32,39 @@ coverage: ## check test coverage meets the threshold (app, internal and libs; me
 		go test -tags "$(GRAMMARS)" -coverprofile=coverage.out -covermode=atomic $$pkg > /dev/null; \
 		if [ -f coverage.out ]; then \
 			coverage=$$(go tool cover -func=coverage.out | grep total: | awk '{print $$3}' | sed 's/%//'); \
-			if [ $$(echo "$$coverage < $(COVERAGE_THRESHOLD)" | bc -l) -eq 1 ]; then \
-				echo "❌ Coverage in $$pkg is below $(COVERAGE_THRESHOLD)!"; \
+			if [ -z "$$coverage" ]; then \
+				echo "⚠️  $$pkg: no coverage total"; \
 				fail=1; \
+			elif awk "BEGIN { exit !($$coverage < $(COVERAGE_THRESHOLD)) }"; then \
+				echo "❌ $$pkg: $$coverage% (below $(COVERAGE_THRESHOLD)%)"; \
+				fail=1; \
+			else \
+				echo "✅ $$pkg: $$coverage%"; \
 			fi; \
 			rm -f coverage.out; \
 		else \
-			echo "⚠️ No coverage data for $$pkg"; \
+			echo "⚠️  $$pkg: no coverage data"; \
 			fail=1; \
 		fi; \
 	done; \
-	exit $$fail
+	if [ $$fail -ne 0 ]; then \
+		echo "❌ coverage below threshold ($(COVERAGE_THRESHOLD)%)"; \
+		exit 1; \
+	fi; \
+	echo "✅ coverage: all packages >= $(COVERAGE_THRESHOLD)%"
 
 .PHONY: verify
-verify: test vet lint license-check coverage ## run the full verification suite
+verify: ## run the full verification suite; runs every check and fails if any fail
+	@fail=0; \
+	for target in test vet lint license-check coverage; do \
+		echo "==================== make $$target ===================="; \
+		$(MAKE) --no-print-directory $$target || fail=1; \
+	done; \
+	if [ $$fail -ne 0 ]; then \
+		echo "❌ verify failed (see above)"; \
+		exit 1; \
+	fi; \
+	echo "✅ verify passed"
 
 #==========================================================================================
 ##@ Running
