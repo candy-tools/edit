@@ -3,9 +3,9 @@ package tui
 import (
 	"path"
 
-	"github.com/candy-tools/edit/libs/syntax"
-	"github.com/candy-tools/edit/libs/syntax/treesitter"
-	"github.com/candy-tools/edit/libs/textedit"
+	"github.com/candy-tools/trazo/libs/syntax"
+	"github.com/candy-tools/trazo/libs/syntax/treesitter"
+	"github.com/candy-tools/trazo/libs/textedit"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -32,7 +32,7 @@ type parsedMsg struct {
 // highlight gives d, a document a tab just opened, a Highlighter for its
 // text's language, found by the base name of its path and its first line,
 // and makes the text tell it of every edit. It does nothing for a note, a
-// language edit doesn't color, or a theme that colors nothing.
+// language trazo doesn't color, or a theme that colors nothing.
 func (d *document) highlight(theme Theme) {
 	if d.text == nil || !theme.colors() {
 		return

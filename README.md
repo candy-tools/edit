@@ -1,4 +1,4 @@
-# edit
+# trazo
 
 A keyboard-driven text editor for the terminal, laid out like an IDE: a file
 sidebar on the left and the open files as tabs on the right.
@@ -19,8 +19,8 @@ for the CLI.
 ## Usage
 
 ```sh
-edit                                # opens the current directory as the workspace
-edit --config path/to/config.yaml   # reads the settings from another file
+trazo                               # opens the current directory as the workspace
+trazo --config path/to/config.yaml  # reads the settings from another file
 ```
 
 These keys work in either pane:
@@ -65,7 +65,7 @@ And these, while the editor has focus:
 Any other character key types itself, and pasted text goes in at the cursor.
 `esc esc` is esc pressed twice, the second time within half a second of the
 first; a single esc does nothing.
-ctrl+shift+z only reaches edit from a terminal that reports it — see
+ctrl+shift+z only reaches trazo from a terminal that reports it — see
 [Keys your terminal must report](#keys-your-terminal-must-report); where it
 arrives as ctrl+z, it undoes, and ctrl+y redoes.
 Every key can be rebound in the config file: see
@@ -74,10 +74,10 @@ folder from disk each time it is expanded.
 
 ### Editing and saving
 
-There is no save key. edit writes each tab's edits to disk in the background,
+There is no save key. trazo writes each tab's edits to disk in the background,
 every 500 ms, so an edit is on disk about half a second after you make it.
 Closing a tab saves it first, and quitting saves every tab — as does stopping
-edit with SIGTERM or SIGINT, or closing its terminal. A file you only look at
+trazo with SIGTERM or SIGINT, or closing its terminal. A file you only look at
 is never written.
 
 - **What is written** is the file as it was read, with your edits: every
@@ -88,12 +88,12 @@ is never written.
   permissions, owner and hard links, and a symlink keeps pointing at the
   file it names; no temporary file appears in the workspace.
 - **When a write fails** — a read-only file, a full disk — the tab's title
-  gets a `⚠` and the header says why; edit keeps retrying every 500 ms.
+  gets a `⚠` and the header says why; trazo keeps retrying every 500 ms.
   Closing or quitting then stops and asks: the same key again closes or
   quits anyway, and the edits that couldn't be saved are lost; any other key
   cancels. esc cancels too, so `esc esc` never closes anyway: its first esc
   cancels, and its second asks again. With the mouse on, the tab's `×`
-  closes it anyway too. After quitting anyway, edit prints what it couldn't
+  closes it anyway too. After quitting anyway, trazo prints what it couldn't
   save.
 - **Undo** takes back one step at a time: a word you typed with the spaces,
   tabs or line breaks after it, a run of backspaces, a run of deletes, a
@@ -113,7 +113,7 @@ is never written.
 
 ### Syntax colors
 
-edit colors the text of Go (and `go.mod`), YAML, JSON, Markdown, shell,
+trazo colors the text of Go (and `go.mod`), YAML, JSON, Markdown, shell,
 Makefile, JavaScript, Python and Java files by their syntax: keywords,
 strings, numbers, comments, the names of functions and types where they are
 declared and used, and, in Markdown, headings, emphasis, code and links, a
@@ -174,11 +174,11 @@ are listed, enter waits for them.
 
 ## Configuration
 
-edit reads its settings from `config.yaml` in an `edit` folder of your config
-directory: `~/.config/edit/config.yaml` on Linux (or under `$XDG_CONFIG_HOME`
-when it is set), `~/Library/Application Support/edit/config.yaml` on macOS.
-`--config` names another file. The file is optional: without it, edit uses
-the keys above and the theme `candy`, with the mouse off. edit reads it
+trazo reads its settings from `config.yaml` in a `trazo` folder of your config
+directory: `~/.config/trazo/config.yaml` on Linux (or under `$XDG_CONFIG_HOME`
+when it is set), `~/Library/Application Support/trazo/config.yaml` on macOS.
+`--config` names another file. The file is optional: without it, trazo uses
+the keys above and the theme `candy`, with the mouse off. trazo reads it
 once, at start-up, and never writes it.
 
 It has three settings. `theme` picks the colors of the text:
@@ -189,7 +189,7 @@ theme: dracula
 
 | Theme | For |
 |---|---|
-| `candy` | dark terminals, in the 256-color palette of edit's own frame; the default |
+| `candy` | dark terminals, in the 256-color palette of trazo's own frame; the default |
 | `candy-light` | light terminals |
 | `dracula` | the [Dracula](https://draculatheme.com) palette |
 | `gruvbox` | the [Gruvbox](https://github.com/morhetz/gruvbox) dark palette |
@@ -197,7 +197,7 @@ theme: dracula
 
 A theme sets the color of the text, bold, italics and underline, never the
 background, so each works on your terminal's own. On a terminal without
-colors, or with `NO_COLOR` set, edit draws none, whatever the theme.
+colors, or with `NO_COLOR` set, trazo draws none, whatever the theme.
 
 `mouse` turns the mouse on:
 
@@ -209,7 +209,7 @@ Each tab then gets a `×`. Clicking it, or middle-clicking anywhere on the
 tab, saves and closes that tab, as `close-tab` does the active one, and
 clicking a tab's name switches to it. The wheel moves the cursor of the pane
 under it, the file tree's or the text's, 3 lines a notch. The mouse is off
-by default, since while edit has it, the terminal's own text selection takes
+by default, since while trazo has it, the terminal's own text selection takes
 shift and a drag instead of a plain drag. Off, the terminal keeps the mouse,
 and most terminals turn the wheel into ↑ and ↓.
 
@@ -272,7 +272,7 @@ the key.
 | Modifiers | `ctrl+`, `alt+`, `shift+`, `meta+`, `hyper+` or `super+` in front of any of the above, alone or together: `ctrl+w`, `alt+right`, `ctrl+shift+z`, `shift+enter`, `alt+space` |
 
 Names are lower-case but for the character itself, and the modifiers can
-come in any order: edit writes them ctrl, alt, shift, meta, hyper, super,
+come in any order: trazo writes them ctrl, alt, shift, meta, hyper, super,
 and a capital after a modifier as shift and the small letter, so
 `shift+ctrl+Z` is `ctrl+shift+z` and `alt+J` is `alt+shift+j`, as the footer
 shows them. `shift+j` is not a key (write `J`), and neither is shift before
@@ -280,7 +280,7 @@ a sign: write the sign shift types, `alt+?` rather than `alt+shift+/`. With
 ctrl, a letter of a script other than Latin is the key it is on in the US
 layout, as terminals send it: on a Russian layout, ctrl+й is `ctrl+q`.
 ctrl+space is `ctrl+space`;
-`ctrl+@`, the name older versions of edit gave it, still means it. Keys edit
+`ctrl+@`, the name older versions of trazo gave it, still means it. Keys trazo
 never receives are not accepted: a modifier or lock key pressed alone, such
 as `leftshift` or `capslock`. A key that means something in YAML — `#`, `:`,
 `[`, `]`, `{`, `}`, `,`, `&`, `*`, `!`, `|`, `>`, `'`, `"`, `%`, `@` or
@@ -288,7 +288,7 @@ as `leftshift` or `capslock`. A key that means something in YAML — `#`, `:`,
 
 ### Keys your terminal must report
 
-Some keys reach edit only from a terminal that reports them: ctrl+shift with
+Some keys reach trazo only from a terminal that reports them: ctrl+shift with
 a letter, shift+enter, ctrl+i apart from tab, ctrl+m apart from enter, and
 the like. Terminals with the kitty keyboard protocol — kitty, Ghostty, foot,
 Alacritty, WezTerm with `enable_kitty_keyboard` — or with xterm's
@@ -305,31 +305,31 @@ unbind it there.
 
 The other way round, a terminal without the kitty protocol sends alt and a
 key as esc then the key, so esc and a key pressed at once — a quick
-`esc esc` — reach edit as alt and that key, `alt+esc`. When alt and that
-key are bound to nothing, edit takes them as esc then the key, so `esc esc`
+`esc esc` — reach trazo as alt and that key, `alt+esc`. When alt and that
+key are bound to nothing, trazo takes them as esc then the key, so `esc esc`
 closes a tab however fast you press it. In the search popup, a fast double
 esc closes the popup, its second esc dropped.
 
-A mistake in the file stops edit before it starts, with a message that names
+A mistake in the file stops trazo before it starts, with a message that names
 the file and lists every problem:
 
 ```
-config /home/you/.config/edit/config.yaml: invalid shortcuts:
+config /home/you/.config/trazo/config.yaml: invalid shortcuts:
   editor.down: key "j" types text
   editor.up: unknown key "ctrl+uo"
   key "esc" is bound to sidebar.collapse and starts "esc esc" of global.close-tab
   key "j" is bound to both sidebar.down and sidebar.up
 ```
 
-or, for a theme edit doesn't have:
+or, for a theme trazo doesn't have:
 
 ```
-config /home/you/.config/edit/config.yaml: unknown theme "monokai": want candy, candy-light, dracula, gruvbox or none
+config /home/you/.config/trazo/config.yaml: unknown theme "monokai": want candy, candy-light, dracula, gruvbox or none
 ```
 
 ## Install
 
-edit is a single, dependency-free binary (pure Go, no CGO). Prebuilt archives, a
+trazo is a single, dependency-free binary (pure Go, no CGO). Prebuilt archives, a
 Debian package, and a macOS cask are published on every tagged release.
 
 ### macOS (Homebrew)
@@ -340,19 +340,19 @@ every tagged release. Add the tap, then install:
 
 ```bash
 brew tap candy-tools/tap
-brew install --cask edit
+brew install --cask trazo
 ```
 
 `brew upgrade` tracks future releases. The binary isn't notarized, so the cask
-strips the Gatekeeper quarantine flag on install — no "edit is damaged" prompt.
+strips the Gatekeeper quarantine flag on install — no "trazo is damaged" prompt.
 
 ### Debian / Ubuntu
 
 Download the `.deb` for your architecture from the
-[releases page](https://github.com/candy-tools/edit/releases) and install it:
+[releases page](https://github.com/candy-tools/trazo/releases) and install it:
 
 ```bash
-sudo apt install ./edit_*_amd64.deb
+sudo apt install ./trazo_*_amd64.deb
 ```
 
 ### From source
@@ -360,20 +360,20 @@ sudo apt install ./edit_*_amd64.deb
 With a Go 1.26+ toolchain installed:
 
 ```bash
-go install github.com/candy-tools/edit@latest
+go install github.com/candy-tools/trazo@latest
 ```
 
 This binary embeds the grammars of every language the syntax-coloring
-library knows, about 32 MB; the release binaries embed only edit's ten,
+library knows, about 32 MB; the release binaries embed only trazo's ten,
 about 14 MB.
 
 Or grab a prebuilt `tar.gz` (`.zip` on Windows) for your OS/arch from the
-[releases page](https://github.com/candy-tools/edit/releases).
+[releases page](https://github.com/candy-tools/trazo/releases).
 
 ## Develop
 
 Requires Go 1.26+. The full toolchain also needs `golangci-lint`, `goreleaser`,
-and `go-licence-detector`. edit has no runtime dependencies — it's a single
+and `go-licence-detector`. trazo has no runtime dependencies — it's a single
 static binary.
 
 ```bash
@@ -395,13 +395,13 @@ so `make lint` fails on a wrong-way import.
 
 `libs/syntax` is the plug-in boundary: an engine implements its `Language`
 and `Tree`, and its `Highlighter` keeps one text's tree up to date in the
-background. `libs/syntax/treesitter` is the engine edit uses: tree-sitter
+background. `libs/syntax/treesitter` is the engine trazo uses: tree-sitter
 grammars run in pure Go by
-[gotreesitter](https://github.com/odvcencio/gotreesitter), with edit's own
+[gotreesitter](https://github.com/odvcencio/gotreesitter), with trazo's own
 highlight queries in `libs/syntax/treesitter/queries/`.
 
 gotreesitter's build tags pick the grammars a build embeds. The Makefile's
-`GRAMMARS` lists edit's, and every `make` target passes them to `go`, as
+`GRAMMARS` lists trazo's, and every `make` target passes them to `go`, as
 `.golangci.yaml` and `.goreleaser.yaml` do; a plain `go build` or `go test`
 works too, embedding all 206. To color another language:
 

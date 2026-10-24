@@ -134,7 +134,7 @@ func TestKeyNames(t *testing.T) {
 	for _, k := range []string{
 		"Ctrl+W", "shift+j", "shift+J", "Enter", "F5", "jk", "",
 		"\x01", "\x7f", "\xff", "runes", "alt+", "alt+alt+x", "ctrl+shift+ctrl+x", "alt+jk",
-		// keys edit never receives: a modifier key alone, a lock key, keys
+		// keys trazo never receives: a modifier key alone, a lock key, keys
 		// Bubble Tea never decodes
 		"leftshift", "ctrl+rightalt", "isolevel3shift", "capslock", "numlock", "scrolllock", "find", "select",
 		// shift before a sign: the sign shift types is the key

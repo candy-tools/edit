@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/candy-tools/edit/app/tui"
-	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/candy-tools/trazo/app/tui"
+	"github.com/candy-tools/trazo/libs/keymap"
 	"github.com/charmbracelet/colorprofile"
 )
 
@@ -24,17 +24,17 @@ func stubTUI(t *testing.T, fn func(root string, keys *keymap.Map, theme tui.Them
 	t.Cleanup(func() { runTUI = orig })
 }
 
-// noUserConfig points edit's default config file at a path in an empty
+// noUserConfig points trazo's default config file at a path in an empty
 // temporary directory, so a developer's own config file is never read or
 // written, on any OS, and returns that path.
 func noUserConfig(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "edit", "config.yaml")
+	path := filepath.Join(t.TempDir(), "trazo", "config.yaml")
 	stubConfigPath(t, func() (string, error) { return path, nil })
 	return path
 }
 
-// noConfigDir makes edit find no config directory, as when $HOME is unset.
+// noConfigDir makes trazo find no config directory, as when $HOME is unset.
 func noConfigDir(t *testing.T) {
 	t.Helper()
 	stubConfigPath(t, func() (string, error) { return "", errors.New("no config directory") })
@@ -68,7 +68,7 @@ type started struct {
 	mouse  bool
 }
 
-// execute runs edit with args, the TUI stubbed, and returns what the TUI
+// execute runs trazo with args, the TUI stubbed, and returns what the TUI
 // started with, nil if it didn't start, and the command's error.
 func execute(t *testing.T, args ...string) (*started, error) {
 	t.Helper()
@@ -83,7 +83,7 @@ func execute(t *testing.T, args ...string) (*started, error) {
 	return s, err
 }
 
-// terminal makes edit see a terminal of color profile p until the test
+// terminal makes trazo see a terminal of color profile p until the test
 // ends: a test's own output is no terminal.
 func terminal(t *testing.T, p colorprofile.Profile) {
 	t.Helper()
@@ -195,7 +195,7 @@ func TestRootReadsTheConfigFile(t *testing.T) {
 	}
 }
 
-// Review focus: on a terminal without colors, or with NO_COLOR set, edit
+// Review focus: on a terminal without colors, or with NO_COLOR set, trazo
 // draws no colors whatever the config file says; nor when its output is no
 // terminal, or TERM is dumb.
 func TestRootWithoutColorsUsesTheThemeNone(t *testing.T) {
@@ -261,7 +261,7 @@ func TestColorsAreReadAsV1ReadThem(t *testing.T) {
 
 func TestRootReadsTheFileTheConfigFlagNames(t *testing.T) {
 	writeFile(t, noUserConfig(t), "shortcuts:\n  sidebar:\n    down: [k]\n")
-	path := filepath.Join(t.TempDir(), "edit.yaml")
+	path := filepath.Join(t.TempDir(), "trazo.yaml")
 	writeFile(t, path, "shortcuts:\n  sidebar:\n    down: [j]\n")
 	s, err := execute(t, "--config", path)
 	if err != nil {
@@ -292,7 +292,7 @@ func TestRootStopsOnAConfigMistake(t *testing.T) {
 		path := noUserConfig(t)
 		var args []string
 		if c.flag {
-			path = filepath.Join(t.TempDir(), "edit.yaml")
+			path = filepath.Join(t.TempDir(), "trazo.yaml")
 			args = []string{"--config", path}
 		}
 		if c.text != "" {
@@ -308,7 +308,7 @@ func TestRootStopsOnAConfigMistake(t *testing.T) {
 	}
 }
 
-// Review focus: a config file at the default location that edit can't read
+// Review focus: a config file at the default location that trazo can't read
 // stops it with the cause, rather than leaving it on the default keys.
 func TestRootStopsOnAnUnreadableConfigFile(t *testing.T) {
 	path := noUserConfig(t)
@@ -325,7 +325,7 @@ func TestRootStopsOnAnUnreadableConfigFile(t *testing.T) {
 }
 
 func TestRootStopsOnAConfigSyntaxError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "edit.yaml")
+	path := filepath.Join(t.TempDir(), "trazo.yaml")
 	writeFile(t, path, "shortcuts:\n  sidebar: [down\n")
 	s, err := execute(t, "--config", path)
 	if want := "config " + path + ": yaml: line "; err == nil || !strings.HasPrefix(err.Error(), want) {
@@ -354,7 +354,7 @@ func TestRootHelpNamesTheDefaultConfigFile(t *testing.T) {
 
 func TestRootHelpWithoutAConfigDirectory(t *testing.T) {
 	noConfigDir(t)
-	if got, want := configUsage(), "(default edit/config.yaml in the user config directory)"; !strings.HasSuffix(got, want) {
+	if got, want := configUsage(), "(default trazo/config.yaml in the user config directory)"; !strings.HasSuffix(got, want) {
 		t.Errorf("--config's help = %q, want it to end %q", got, want)
 	}
 }

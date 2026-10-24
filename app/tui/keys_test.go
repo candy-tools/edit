@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// defaultKeys are edit's actions, as the config file names them, and their
+// defaultKeys are trazo's actions, as the config file names them, and their
 // default keys.
 var defaultKeys = map[string][]string{
 	"global.quit":         {"ctrl+q", "ctrl+c"},
@@ -61,12 +61,12 @@ func TestTheDefaultKeys(t *testing.T) {
 		t.Fatalf("the default keys should make a valid keymap: %v", err)
 	}
 	if len(actions) != len(defaultKeys) {
-		t.Errorf("edit has %d actions, want %d", len(actions), len(defaultKeys))
+		t.Errorf("trazo has %d actions, want %d", len(actions), len(defaultKeys))
 	}
 	for _, a := range actions {
 		want, ok := defaultKeys[a.String()]
 		if !ok {
-			t.Errorf("%s is not one of edit's actions", a)
+			t.Errorf("%s is not one of trazo's actions", a)
 			continue
 		}
 		if got := keys.Keys(a.ID); !slices.Equal(got, want) {

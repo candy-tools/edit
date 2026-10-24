@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/candy-tools/trazo/libs/keymap"
 )
 
 // testFS is the workspace the model tests open: a folder and two files.
@@ -22,7 +22,7 @@ var testFS = fstest.MapFS{
 // keys.
 type overrides = map[string]map[string][]string
 
-// testKeys is edit's default keymap, which the model tests run on unless
+// testKeys is trazo's default keymap, which the model tests run on unless
 // they rebind keys.
 var testKeys = func() *keymap.Map {
 	keys, err := NewKeymap(nil)
@@ -58,7 +58,7 @@ func noWrites(path string, _ []byte) error {
 	panic("unexpected write of " + path)
 }
 
-// rebound is edit's keymap with the keys o rebinds.
+// rebound is trazo's keymap with the keys o rebinds.
 func rebound(t *testing.T, o overrides) *keymap.Map {
 	t.Helper()
 	keys, err := NewKeymap(o)

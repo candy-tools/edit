@@ -1,7 +1,7 @@
 ; Markdown's block syntax, after the tree-sitter-markdown query gotreesitter
 ; bundles (see ../NOTICE). The inline syntax comes injected into every inline
 ; and table cell (see markdown_inline), and a fenced code block in one of
-; edit's languages is colored in that language instead (see
+; trazo's languages is colored in that language instead (see
 ; injections.scm).
 
 [

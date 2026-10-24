@@ -1,6 +1,6 @@
 version: "2"
 run:
-  # the grammars edit colors with, as the Makefile's GRAMMARS lists them
+  # the grammars trazo colors with, as the Makefile's GRAMMARS lists them
   build-tags:
     - grammar_subset
     - grammar_subset_go
@@ -43,9 +43,9 @@ linters:
           files:
             - "**/libs/**"
           deny:
-            - pkg: github.com/candy-tools/edit/app
+            - pkg: github.com/candy-tools/trazo/app
               desc: libs/ must not depend on the app
-            - pkg: github.com/candy-tools/edit/internal
+            - pkg: github.com/candy-tools/trazo/internal
               desc: libs/ must not depend on the app
     nolintlint:
       # Enable to require an explanation of nonzero length after each nolint directive.

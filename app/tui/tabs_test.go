@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/candy-tools/edit/libs/tabset"
+	"github.com/candy-tools/trazo/libs/tabset"
 	"github.com/charmbracelet/x/ansi"
 )
 

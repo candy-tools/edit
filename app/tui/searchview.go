@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/candy-tools/edit/libs/grep"
+	"github.com/candy-tools/trazo/libs/grep"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -48,7 +48,7 @@ func queryWidth(width int) int {
 
 // overlaySearch lays the search popup over frame, a screen w by h, where
 // searchBox puts it, with lipgloss's compositor, which measures characters
-// as grapheme clusters, as edit does.
+// as grapheme clusters, as trazo does.
 func (m model) overlaySearch(frame string, w, h int) string {
 	x, y, width, height := searchBox(w, h)
 	popup := lipgloss.NewLayer(m.searchView(width, height)).X(x).Y(y).Z(1)

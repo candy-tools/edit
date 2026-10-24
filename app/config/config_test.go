@@ -36,7 +36,7 @@ func TestLoadAMissingFile(t *testing.T) {
 	}
 }
 
-// A file edit can't read gives the cause alone, without the path.
+// A file trazo can't read gives the cause alone, without the path.
 func TestLoadAnUnreadableFile(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs file permissions that root doesn't bypass")
@@ -165,7 +165,7 @@ func TestLoadASyntaxError(t *testing.T) {
 	}
 }
 
-// Review fix: edit reads one document, so another one that holds anything,
+// Review fix: trazo reads one document, so another one that holds anything,
 // even a mistake, stops it rather than being ignored without a word.
 func TestLoadAFileWithASecondDocument(t *testing.T) {
 	for _, text := range []string{
@@ -190,9 +190,9 @@ func TestDefaultPath(t *testing.T) {
 	home, xdg := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
-	want := filepath.Join(xdg, "edit", "config.yaml")
+	want := filepath.Join(xdg, "trazo", "config.yaml")
 	if runtime.GOOS == "darwin" {
-		want = filepath.Join(home, "Library", "Application Support", "edit", "config.yaml")
+		want = filepath.Join(home, "Library", "Application Support", "trazo", "config.yaml")
 	}
 	if got, err := DefaultPath(); err != nil || got != want {
 		t.Errorf("DefaultPath = %q, %v; want %q", got, err, want)

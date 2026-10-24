@@ -13,7 +13,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/candy-tools/edit/libs/textedit"
+	"github.com/candy-tools/trazo/libs/textedit"
 )
 
 // Picker is a query and a list of items to pick from. It is not safe for

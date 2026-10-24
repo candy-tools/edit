@@ -1,4 +1,4 @@
-module github.com/candy-tools/edit
+module github.com/candy-tools/trazo
 
 go 1.26.2
 

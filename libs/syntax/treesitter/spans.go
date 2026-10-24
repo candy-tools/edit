@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/candy-tools/edit/libs/syntax"
+	"github.com/candy-tools/trazo/libs/syntax"
 	ts "github.com/odvcencio/gotreesitter"
 )
 
@@ -202,7 +202,7 @@ func point(p syntax.Point) ts.Point {
 	return ts.Point{Row: u32(p.Line), Column: u32(p.Column)}
 }
 
-// u32 is n as gotreesitter counts offsets: n itself, as no text edit colors
+// u32 is n as gotreesitter counts offsets: n itself, as no text trazo colors
 // comes near 4 GB.
 func u32(n int) uint32 {
 	return uint32(min(max(n, 0), math.MaxUint32))

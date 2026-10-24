@@ -1,4 +1,4 @@
-// Package cmd is the command-line entry point: it parses `edit`, reads the
+// Package cmd is the command-line entry point: it parses `trazo`, reads the
 // config file and launches the interactive TUI on the current directory.
 package cmd
 
@@ -10,10 +10,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/candy-tools/edit/app/config"
-	"github.com/candy-tools/edit/app/metainfo"
-	"github.com/candy-tools/edit/app/tui"
-	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/candy-tools/trazo/app/config"
+	"github.com/candy-tools/trazo/app/metainfo"
+	"github.com/candy-tools/trazo/app/tui"
+	"github.com/candy-tools/trazo/libs/keymap"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -24,12 +24,12 @@ import (
 // without a terminal.
 var runTUI = tui.Run
 
-// defaultConfigPath is where edit looks for its config file without
+// defaultConfigPath is where trazo looks for its config file without
 // --config. It is a package variable so tests can point it at a temporary
 // file, whatever the OS's config directory.
 var defaultConfigPath = config.DefaultPath
 
-// terminalProfile says which colors the terminal edit draws on shows, as
+// terminalProfile says which colors the terminal trazo draws on shows, as
 // colorsOf reads them. It is a package variable so tests can fake a
 // terminal.
 var terminalProfile = func() colorprofile.Profile {
@@ -37,7 +37,7 @@ var terminalProfile = func() colorprofile.Profile {
 }
 
 // colorsOf is the color profile of the terminal on out, whose environment is
-// env, as edit reads it: as colorprofile detects it, but without colors
+// env, as trazo reads it: as colorprofile detects it, but without colors
 // when NO_COLOR is set to anything, or CLICOLOR is 0 and CLICOLOR_FORCE
 // isn't set, as termenv read them for Bubble Tea v1; and when tty says out
 // is a terminal, with text attributes but no colors rather than nothing at
@@ -72,9 +72,9 @@ func Execute() {
 func newRootCommand() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
-		Use:           "edit",
+		Use:           "trazo",
 		Short:         "A terminal text editor",
-		Long:          "edit is a keyboard-driven text editor for the terminal: a file sidebar\non the left and the open files as tabs on the right.\n\nIt opens the current directory as the workspace.",
+		Long:          "trazo is a keyboard-driven text editor for the terminal: a file sidebar\non the left and the open files as tabs on the right.\n\nIt opens the current directory as the workspace.",
 		Version:       metainfo.Version,
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
@@ -97,10 +97,10 @@ func newRootCommand() *cobra.Command {
 	return cmd
 }
 
-// configUsage is the help of the --config flag, which names the file edit
+// configUsage is the help of the --config flag, which names the file trazo
 // reads without it.
 func configUsage() string {
-	where := "edit/config.yaml in the user config directory"
+	where := "trazo/config.yaml in the user config directory"
 	if path, err := defaultConfigPath(); err == nil {
 		where = path
 	}

@@ -1,4 +1,4 @@
-edit's highlight and injection queries are its own, written after the
+trazo's highlight and injection queries are its own, written after the
 queries that gotreesitter (https://github.com/odvcencio/gotreesitter, MIT)
 bundles for each grammar, which come from these projects:
 

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/candy-tools/edit/app/cmd"
+import "github.com/candy-tools/trazo/app/cmd"
 
 func main() {
 	cmd.Execute()

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/candy-tools/edit/libs/keymap"
-	"github.com/candy-tools/edit/libs/textedit"
+	"github.com/candy-tools/trazo/libs/keymap"
+	"github.com/candy-tools/trazo/libs/textedit"
 	"github.com/charmbracelet/x/ansi"
 )
 

@@ -3,7 +3,7 @@
 // header and a key-hint footer. The sidebar browses the workspace as a folder
 // tree, and enter opens a file in a tab of the editor pane, where it can be
 // edited, its text colored by its syntax; edits are saved in the background,
-// and when a tab closes or edit quits. ctrl+f opens a search popup: from the
+// and when a tab closes or trazo quits. ctrl+f opens a search popup: from the
 // sidebar it searches every file of the workspace, from the editor the open
 // file. Keys are looked up in a keymap, which the user can rebind in the
 // config file, as they can pick the theme and turn the mouse on, to close a
@@ -21,10 +21,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/candy-tools/edit/app/metainfo"
-	"github.com/candy-tools/edit/libs/keymap"
-	"github.com/candy-tools/edit/libs/tabset"
-	"github.com/candy-tools/edit/libs/treeview"
+	"github.com/candy-tools/trazo/app/metainfo"
+	"github.com/candy-tools/trazo/libs/keymap"
+	"github.com/candy-tools/trazo/libs/tabset"
+	"github.com/candy-tools/trazo/libs/treeview"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -86,11 +86,11 @@ type model struct {
 // colors the terminal shows, colors, and returns once it has quit and saved
 // every edit it could.
 func Run(root string, keys *keymap.Map, theme Theme, colors colorprofile.Profile, mouse bool) error {
-	// edit catches SIGHUP, SIGINT and SIGTERM itself, until it is done, rather
+	// trazo catches SIGHUP, SIGINT and SIGTERM itself, until it is done, rather
 	// than leave them to Bubble Tea: its handler can block for good on a
 	// signal that arrives as the program ends, and a second signal during
 	// the final save, such as the shell's SIGHUP after the terminal's, must
-	// not kill edit between truncating a file and writing it.
+	// not kill trazo between truncating a file and writing it.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigs)
@@ -159,12 +159,12 @@ func newModel(root string, fsys fs.FS, write writeFunc, keys *keymap.Map, theme 
 
 func (m model) Init() tea.Cmd { return graphemeWidths }
 
-// graphemeWidths makes Bubble Tea measure the characters of a frame as edit
+// graphemeWidths makes Bubble Tea measure the characters of a frame as trazo
 // lays them out, as grapheme clusters, rather than a rune at a time: it
 // reports mode 2027 to the program as set, as a terminal with grapheme
 // clustering answers Bubble Tea's query for it, a query Bubble Tea doesn't
 // send over SSH. A ZWJ family is then two cells to the renderer, as it is
-// to edit.
+// to trazo.
 func graphemeWidths() tea.Msg {
 	return tea.ModeReportMsg{Mode: ansi.ModeUnicodeCore, Value: ansi.ModeSet}
 }
@@ -306,7 +306,7 @@ func (m model) typeIn(text string) model {
 	return m
 }
 
-// quit saves every tab and quits. When a tab can't be saved, edit stays and
+// quit saves every tab and quits. When a tab can't be saved, trazo stays and
 // the footer asks for quit again, which quits anyway: anyway says this is
 // that second press, which leaves the last try to the final save.
 func (m model) quit(anyway bool) (model, tea.Cmd) {
@@ -557,7 +557,7 @@ func (m model) header(width int) string {
 	if doc := m.saveProblem(); doc != nil {
 		where = warnStyle.Render("⚠ Can't save " + displayName(doc.path) + ": " + errText(doc.saveErr))
 	}
-	left := headerAppStyle.Render("edit") + " " + headerHintSty.Render(m.version) + "  " + where
+	left := headerAppStyle.Render("trazo") + " " + headerHintSty.Render(m.version) + "  " + where
 	return ansi.Truncate(" "+left, width, "")
 }
 

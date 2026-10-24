@@ -7,8 +7,8 @@ import (
 	"io/fs"
 	"strconv"
 
-	"github.com/candy-tools/edit/libs/syntax"
-	"github.com/candy-tools/edit/libs/textedit"
+	"github.com/candy-tools/trazo/libs/syntax"
+	"github.com/candy-tools/trazo/libs/textedit"
 )
 
 const (
@@ -34,7 +34,7 @@ type document struct {
 	note string           // what the tab shows instead, when text is nil
 
 	file    *file // writes text back to the file; nil when text is
-	saved   int   // the version of text on disk, as far as edit knows
+	saved   int   // the version of text on disk, as far as trazo knows
 	writing bool  // a background write of text is running
 	saveErr error // why the last write failed; nil once one works
 	failed  int   // the version whose write failed, while saveErr is set

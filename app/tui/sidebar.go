@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/candy-tools/edit/libs/keymap"
-	"github.com/candy-tools/edit/libs/treeview"
+	"github.com/candy-tools/trazo/libs/keymap"
+	"github.com/candy-tools/trazo/libs/treeview"
 )
 
 // sidebarBody draws the file tree's scroll window for the sidebar box.

@@ -4,10 +4,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/candy-tools/trazo/libs/keymap"
 )
 
-// The scopes of edit's actions, next to keymap.Global: the pane with focus
+// The scopes of trazo's actions, next to keymap.Global: the pane with focus
 // decides which of them is active, or the search popup, which takes every
 // key while it is open. Keys type text in the editor and in the popup's
 // query.
@@ -17,7 +17,7 @@ const (
 	scopeSearch  = "search"
 )
 
-// edit's actions: what a key can do, named as the config file names them.
+// trazo's actions: what a key can do, named as the config file names them.
 var (
 	actQuit        = keymap.ID{Scope: keymap.Global, Name: "quit"}
 	actSwitchFocus = keymap.ID{Scope: keymap.Global, Name: "switch-focus"}
@@ -69,10 +69,10 @@ var (
 	searchClose       = keymap.ID{Scope: scopeSearch, Name: "close"}
 )
 
-// actions are edit's actions with their default keys. quit must keep a key,
+// actions are trazo's actions with their default keys. quit must keep a key,
 // so the config can't lock you in. A double esc closes a tab too. ctrl+h
 // deletes left too, since some terminals send it for backspace.
-// ctrl+shift+z only reaches edit from a terminal that reports it; where it
+// ctrl+shift+z only reaches trazo from a terminal that reports it; where it
 // arrives as ctrl+z, it undoes, so redo has ctrl+y too. The search popup
 // closes on esc, which esc esc doesn't take there, its scope being modal, and
 // on ctrl+c, as quit's ctrl+c waits for it to close; search.close must keep a
@@ -143,7 +143,7 @@ func sequenceTimer(press int) tea.Cmd {
 	return tea.Tick(sequenceTimeout, func(time.Time) tea.Msg { return sequenceTimeoutMsg{press} })
 }
 
-// NewKeymap builds edit's keymap: each action's default keys, except that
+// NewKeymap builds trazo's keymap: each action's default keys, except that
 // an action overrides lists (scope → action name → keys) gets those keys
 // instead. Keys type text in the editor and in the search popup's query, so
 // a key that types text can't be bound there, nor in the global scope,

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/candy-tools/edit/libs/treeview"
+	"github.com/candy-tools/trazo/libs/treeview"
 )
 
 // entry is one file or folder of the workspace.

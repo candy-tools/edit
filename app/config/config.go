@@ -1,4 +1,4 @@
-// Package config reads edit's settings from its config file, a YAML file in
+// Package config reads trazo's settings from its config file, a YAML file in
 // the user's config directory.
 package config
 
@@ -14,7 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Config is edit's settings. The zero Config means the defaults.
+// Config is trazo's settings. The zero Config means the defaults.
 type Config struct {
 	// Shortcuts rebinds actions: scope → action name → keys. It holds what
 	// the file says; which scopes, actions and keys exist is for the keymap
@@ -28,15 +28,15 @@ type Config struct {
 	Mouse bool
 }
 
-// DefaultPath is where edit looks for its config file:
-// <os.UserConfigDir>/edit/config.yaml. It fails when there is no config
+// DefaultPath is where trazo looks for its config file:
+// <os.UserConfigDir>/trazo/config.yaml. It fails when there is no config
 // directory, such as when $HOME is unset.
 func DefaultPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "edit", "config.yaml"), nil
+	return filepath.Join(dir, "trazo", "config.yaml"), nil
 }
 
 // Load reads the config file at path: one YAML document, a mapping of
@@ -50,7 +50,7 @@ func DefaultPath() (string, error) {
 // can't be read gives just the cause, such as "permission denied", and a
 // missing file's error satisfies errors.Is(err, fs.ErrNotExist).
 func Load(path string) (Config, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is the user's own config file, which edit only reads
+	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is the user's own config file, which trazo only reads
 	if err != nil {
 		var pe *fs.PathError
 		if errors.As(err, &pe) {
@@ -70,7 +70,7 @@ func Load(path string) (Config, error) {
 
 // document returns the root of the one YAML document in data, or nil when
 // data holds none, such as a file of only comments. Empty documents don't
-// count, but a second one that holds anything is an error: edit reads one,
+// count, but a second one that holds anything is an error: trazo reads one,
 // and would ignore the rest without a word.
 func document(data []byte) (*yaml.Node, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/candy-tools/edit/libs/syntax"
+	"github.com/candy-tools/trazo/libs/syntax"
 )
 
 // parse parses text in the language Detect finds for a file called name,
@@ -107,10 +107,10 @@ var colored = []struct {
 		{"1.26", "", "number"},
 		{"// deps", "", "comment"},
 	}},
-	{"config.yaml", "# settings\nname: \"edit\"\ncount: 3\nratio: 1.5\non: true\noff: null\nplain: text\nbase: &base\n  a: 1\n" +
+	{"config.yaml", "# settings\nname: \"trazo\"\ncount: 3\nratio: 1.5\non: true\noff: null\nplain: text\nbase: &base\n  a: 1\n" +
 		"copy: *base\ntagged: !custom value\nlist:\n  - one\nblock: |\n  line one\n", []item{
 		{"name:", "name", "property"},
-		{`"edit"`, "", "string"},
+		{`"trazo"`, "", "string"},
 		{"text", "", "string"},
 		{"count: 3", "3", "number"},
 		{"1.5", "", "number"},
@@ -124,9 +124,9 @@ var colored = []struct {
 		{"name:", ":", "punctuation.delimiter"},
 		{"line one", "", "string"},
 	}},
-	{"package.json", `{"name": "edit", "count": 3, "ok": true, "no": false, "none": null}` + "\n", []item{
+	{"package.json", `{"name": "trazo", "count": 3, "ok": true, "no": false, "none": null}` + "\n", []item{
 		{`"name"`, "", "property"},
-		{`"edit"`, "", "string"},
+		{`"trazo"`, "", "string"},
 		{"3", "", "number"},
 		{"true", "", "boolean"},
 		{"false", "", "boolean"},

@@ -9,10 +9,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/candy-tools/edit/libs/gitignore"
-	"github.com/candy-tools/edit/libs/grep"
-	"github.com/candy-tools/edit/libs/keymap"
-	"github.com/candy-tools/edit/libs/picker"
+	"github.com/candy-tools/trazo/libs/gitignore"
+	"github.com/candy-tools/trazo/libs/grep"
+	"github.com/candy-tools/trazo/libs/keymap"
+	"github.com/candy-tools/trazo/libs/picker"
 )
 
 const (

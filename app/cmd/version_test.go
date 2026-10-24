@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/candy-tools/edit/app/metainfo"
+	"github.com/candy-tools/trazo/app/metainfo"
 )
 
 func TestPrintVersion(t *testing.T) {
@@ -30,7 +30,7 @@ func TestVersionCommandRuns(t *testing.T) {
 	if err := c.Execute(); err != nil {
 		t.Fatalf("version command failed: %v", err)
 	}
-	if !strings.Contains(buf.String(), "edit ") {
+	if !strings.Contains(buf.String(), "trazo ") {
 		t.Errorf("unexpected version output:\n%s", buf.String())
 	}
 }

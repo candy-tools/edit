@@ -5,7 +5,7 @@ import (
 	"io"
 	"runtime"
 
-	"github.com/candy-tools/edit/app/metainfo"
+	"github.com/candy-tools/trazo/app/metainfo"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +22,7 @@ func versionCmd() *cobra.Command {
 
 // printVersion writes the version and build metadata to w.
 func printVersion(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "edit %s\n", metainfo.Version)
+	_, _ = fmt.Fprintf(w, "trazo %s\n", metainfo.Version)
 	_, _ = fmt.Fprintf(w, "  commit:   %s\n", metainfo.Commit)
 	_, _ = fmt.Fprintf(w, "  built:    %s\n", metainfo.BuildTime)
 	_, _ = fmt.Fprintf(w, "  compiler: %s\n", runtime.Version())

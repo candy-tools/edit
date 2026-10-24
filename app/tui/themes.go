@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/candy-tools/edit/libs/syntax"
+	"github.com/candy-tools/trazo/libs/syntax"
 	"charm.land/lipgloss/v2"
 )
 

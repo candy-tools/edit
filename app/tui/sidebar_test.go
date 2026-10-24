@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/candy-tools/edit/libs/treeview"
+	"github.com/candy-tools/trazo/libs/treeview"
 	"github.com/charmbracelet/x/ansi"
 )
 

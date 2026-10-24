@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/candy-tools/edit/libs/tabset"
+	"github.com/candy-tools/trazo/libs/tabset"
 	"charm.land/lipgloss/v2"
 )
 

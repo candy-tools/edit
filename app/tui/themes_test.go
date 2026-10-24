@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
-	"github.com/candy-tools/edit/libs/syntax"
+	"github.com/candy-tools/trazo/libs/syntax"
 	"github.com/charmbracelet/x/ansi"
 )
 

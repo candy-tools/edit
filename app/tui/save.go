@@ -32,11 +32,11 @@ func diskWriter(root string) writeFunc {
 	}
 }
 
-// errExiting is the error of a write refused because edit is exiting.
-var errExiting = errors.New("edit is exiting")
+// errExiting is the error of a write refused because trazo is exiting.
+var errExiting = errors.New("trazo is exiting")
 
 // gate passes writes on to write until it closes, then refuses them. Run
-// closes it on the way out, which waits for the writes in progress, so edit
+// closes it on the way out, which waits for the writes in progress, so trazo
 // never exits in the middle of one, even when a panic leaves no model to
 // save.
 type gate struct {

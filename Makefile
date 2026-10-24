@@ -1,7 +1,7 @@
 default: help
 
 # GRAMMARS are the build tags that make gotreesitter embed only the grammars
-# edit colors with; without them a build embeds all 206. .golangci.yaml and
+# trazo colors with; without them a build embeds all 206. .golangci.yaml and
 # .goreleaser.yaml list them too.
 GRAMMARS := grammar_subset grammar_subset_go grammar_subset_gomod \
 	grammar_subset_yaml grammar_subset_json grammar_subset_markdown \
@@ -83,7 +83,7 @@ tag: check-git-clean check-branch ## create and push a git tag to publish a new 
 	@git push origin $(version) || true
 
 clean: ## remove build artifacts
-	@rm -rf edit coverage.out dist
+	@rm -rf trazo coverage.out dist
 
 #==========================================================================================
 #  Help

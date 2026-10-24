@@ -612,7 +612,7 @@ func TestRunSavesWhenTheProgramQuits(t *testing.T) {
 }
 
 // Review focus: the terminal closing sends SIGHUP, and kill sends SIGTERM or
-// SIGINT; edit quits and saves on each.
+// SIGINT; trazo quits and saves on each.
 func TestRunSavesOnASignal(t *testing.T) {
 	for _, sig := range []os.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM} {
 		m, d := typeInGoMod(t)
@@ -635,7 +635,7 @@ func TestRunSavesOnASignal(t *testing.T) {
 	}
 }
 
-// Review focus: a signal can come as the program ends, or after; edit's own
+// Review focus: a signal can come as the program ends, or after; trazo's own
 // handling never holds the exit up.
 func TestALateSignalDoesntHoldTheExitUp(t *testing.T) {
 	m, _ := newEditModel(testFS)

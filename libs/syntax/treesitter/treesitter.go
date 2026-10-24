@@ -5,7 +5,7 @@
 //
 // A build embeds the grammars that gotreesitter's build tags name, and every
 // grammar of the languages Languages lists must be among them: see the
-// GRAMMARS of edit's Makefile.
+// GRAMMARS of trazo's Makefile.
 package treesitter
 
 import (
@@ -15,7 +15,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/candy-tools/edit/libs/syntax"
+	"github.com/candy-tools/trazo/libs/syntax"
 	ts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
@@ -24,13 +24,13 @@ import (
 // A variable, so a test can make a parse stop.
 var timeout uint64 = 2_000_000
 
-// queries holds edit's highlight and injection queries, one folder per
+// queries holds trazo's highlight and injection queries, one folder per
 // grammar.
 //
 //go:embed queries
 var queries embed.FS
 
-// The grammars edit colors with. Markdown's inline syntax only ever comes
+// The grammars trazo colors with. Markdown's inline syntax only ever comes
 // injected into Markdown.
 var (
 	golang     = &language{name: "go"}
@@ -98,7 +98,7 @@ func Languages() []string {
 	return slices.Sorted(maps.Keys(detectable))
 }
 
-// language is a grammar of gotreesitter's registry and edit's highlight
+// language is a grammar of gotreesitter's registry and trazo's highlight
 // query for it, loaded the first time it parses. A language can inject
 // others into parts of its text, as its injection query says.
 type language struct {

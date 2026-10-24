@@ -3,7 +3,7 @@ package syntax
 import "slices"
 
 // captures is the vocabulary of capture names: the ones current Neovim and
-// Helix themes key on, cut down to what edit's languages use.
+// Helix themes key on, cut down to what trazo's languages use.
 var captures = []string{
 	// code
 	"comment", "keyword", "string", "string.escape", "string.special", "character",

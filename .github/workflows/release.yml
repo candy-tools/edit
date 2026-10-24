@@ -48,7 +48,7 @@ jobs:
           if-no-files-found: error
 
   # register the .deb with candy-tools/debian-repo through the
-  # gh-action-debian-repo engine: it writes packages/edit.json there and pushes
+  # gh-action-debian-repo engine: it writes packages/trazo.json there and pushes
   # it, which triggers a publish. the default GITHUB_TOKEN is scoped to this repo
   # only, so it authenticates as the candy-tools GitHub App (org variable
   # APT_APP_ID + secret APT_APP_PRIVATE_KEY), which mints a short-lived token
@@ -59,7 +59,7 @@ jobs:
       contents: read
     uses: andresbott/gh-action-debian-repo/.github/workflows/publish.yml@v1.0.0-rc.2
     with:
-      name: edit          # must match the .deb's Package field (nfpms package_name)
+      name: trazo         # must match the .deb's Package field (nfpms package_name)
       artifact: debs
       collection: candy-tools/debian-repo
       app-id: ${{ vars.APT_APP_ID }}

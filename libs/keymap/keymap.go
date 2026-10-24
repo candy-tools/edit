@@ -602,8 +602,8 @@ func cutModifier(key string) (mod tea.KeyMod, rest string, ok bool) {
 // tab, backspace, esc and space, then every key code from KeyUp up to the
 // modifier keys — so it follows Bubble Tea's own table. A key Bubble Tea
 // names as a character, such as a keypad digit, is left out: the character
-// is its name. So are the keys edit never receives: a modifier key or a
-// lock key pressed alone, which only a kitty flag edit doesn't ask for
+// is its name. So are the keys trazo never receives: a modifier key or a
+// lock key pressed alone, which only a kitty flag trazo doesn't ask for
 // reports, and find and select, which Bubble Tea never decodes. A name two
 // keys share, as enter does with keypad enter, keeps the first code, since
 // Bubble Tea writes both the same.

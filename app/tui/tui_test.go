@@ -17,8 +17,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/candy-tools/edit/app/metainfo"
-	"github.com/candy-tools/edit/libs/keymap"
+	"github.com/candy-tools/trazo/app/metainfo"
+	"github.com/candy-tools/trazo/libs/keymap"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -105,7 +105,7 @@ func TestLettersTypeOnlyInTheEditor(t *testing.T) {
 	}
 }
 
-// Review focus: Bubble Tea measures the frame's characters as edit lays them
+// Review focus: Bubble Tea measures the frame's characters as trazo lays them
 // out, as grapheme clusters, whatever the terminal answers to its query.
 func TestInitAsksForGraphemeWidths(t *testing.T) {
 	cmd := newTestModel().Init()
@@ -117,7 +117,7 @@ func TestInitAsksForGraphemeWidths(t *testing.T) {
 	}
 }
 
-// Review focus: edit asks the kitty keyboard protocol for alternate keys,
+// Review focus: trazo asks the kitty keyboard protocol for alternate keys,
 // the shifted sign and the PC-101 key beside each key, which name a key the
 // same way in every encoding: alt+? as alt+?, ctrl+й as ctrl+q.
 func TestTheViewAsksForAlternateKeys(t *testing.T) {
@@ -146,7 +146,7 @@ func (s *syncBuffer) String() string {
 }
 
 // Review focus: in a real program, the renderer switches to grapheme widths
-// — it turns the terminal's mode 2027 on — before edit quits.
+// — it turns the terminal's mode 2027 on — before trazo quits.
 func TestTheRendererMeasuresGraphemes(t *testing.T) {
 	in, keys := io.Pipe()
 	out := &syncBuffer{}
@@ -248,7 +248,7 @@ func TestViewDefaultsTo80x24(t *testing.T) {
 
 func TestViewChrome(t *testing.T) {
 	lines := strings.Split(ansi.Strip(newTestModel().View().Content), "\n")
-	if want := "edit " + metainfo.Version + "  /work/project"; !strings.Contains(lines[0], want) {
+	if want := "trazo " + metainfo.Version + "  /work/project"; !strings.Contains(lines[0], want) {
 		t.Errorf("header %q should contain %q", lines[0], want)
 	}
 	if !strings.Contains(lines[1], "Files") {
